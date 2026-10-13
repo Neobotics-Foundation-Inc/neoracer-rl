@@ -30,7 +30,7 @@ python -m examples.gymnasium_random_smoke
 
 ### Description
 
-The car drives on `loop_corridor`, a closed corridor about 1 m wide. The goal is to complete one lap counterclockwise (seen from above) without rolling over or getting stuck against a wall. The agent sees only what the real car's sensors measure, and nothing from the simulator's internal state, so a policy trained here can in principle run on the car.
+The car drives on `loop_corridor`, a closed corridor about 1 m wide. The goal is to complete one lap counterclockwise (seen from above) without rolling over or getting stuck. The agent sees only what the real car's sensors measure, and nothing from the simulator's internal state, so a policy trained here can in principle run on the car.
 
 Each step applies one action for 17 physics steps of 2 ms, so a step is 34 ms of simulated time. That is the closest whole number of physics steps to 1/30 s, the scan rate of the car's LiDAR.
 
@@ -79,7 +79,7 @@ The car starts on the bottom straight at (0, -2.5), facing the forward direction
 The episode terminates when one of these happens, checked in this order:
 
 1. Rollover: the car tilts more than 60° (the cosine of its tilt drops below 0.5).
-2. Stuck: the car moved less than 0.05 rad around the loop during the last 120 steps (about 4 s).
+2. Stuck: over the last 120 steps (about 4 s), the car's net progress around the loop was less than 0.05 rad in either direction. A car pinned against a wall and a car standing still both count.
 3. Lap: the car's total progress reaches 2π.
 
 #### Truncation

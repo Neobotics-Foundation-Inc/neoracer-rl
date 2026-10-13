@@ -22,20 +22,93 @@ python -m examples.gymnasium_random_smoke
 
 ## The environment
 
-`NeoRacerEnv` puts the car on `loop_corridor`, a closed loop of walls about 1 m wide. Each step aims for 1/30 s, the scan rate of the real car's LiDAR. The env rounds that to a whole number of 2 ms physics steps, so a step is 34 ms of simulated time.
+| | |
+|---|---|
+| Action Space | `Box(-1.0, 1.0, (2,), float32)` |
+| Observation Space | `Box(low, high, (20,), float32)`, with the bounds in the table below |
+| import | `from neoracer_rl.envs import NeoRacerEnv` |
 
-The agent sees 20 numbers, all from the car's own sensors: 8 LiDAR distances (m), the IMU's acceleration, rotation rate and orientation, the steering angle and the wheel speed. It chooses 2 numbers between -1 and 1, a throttle and a steering command.
+### Description
 
-The reward is the angle the car moves around the loop in the forward direction, in radians, so one lap is worth about 6.3. A completed lap adds 10, touching a wall costs 0.1 per step, getting stuck costs 5 and rolling over costs 10. An episode ends when the car completes a lap, makes no progress for about 4 s, rolls over, or reaches 1800 steps (about 61 s).
+The car drives on `loop_corridor`, a closed corridor about 1 m wide. The goal is to complete one lap counterclockwise (seen from above) without rolling over or getting stuck. The agent sees only what the real car's sensors measure, and nothing from the simulator's internal state, so a policy trained here can in principle run on the car.
+
+Each step applies one action for 17 physics steps of 2 ms, so a step is 34 ms of simulated time. That is the closest whole number of physics steps to 1/30 s, the scan rate of the car's LiDAR.
+
+### Action Space
+
+The action space is a `Box(-1, 1, (2,), float32)`. The env clips each value to [-1, 1] and multiplies it by the limit of its actuator.
+
+| Num | Action | Control Min | Control Max | Actuator (in neoracer.xml) | Type (Unit) |
+|---|---|---|---|---|---|
+| 0 | Throttle, + drives forward | -1 | 1 | `fl_motor`, `fr_motor`, `rl_motor`, `rr_motor` | torque on each wheel, up to 1.0 (N m) |
+| 1 | Steering, + turns left | -1 | 1 | `steer_servo` | steering angle, up to 0.4 (rad) |
+
+### Observation Space
+
+The observation space is a `Box` of 20 float32 values, all read from the car's sensors:
+
+| Num | Observation | Min | Max | Sensor | Type (Unit) |
+|---|---|---|---|---|---|
+| 0–7 | LiDAR distance at 0°, 45°, …, 315° (0° is straight ahead, angles go counterclockwise); -1 if the beam hits nothing | -1 | 50 | `lidar_000` … `lidar_315` | distance (m) |
+| 8–10 | Acceleration along the car's x, y, z axes, including gravity | -1000 | 1000 | IMU accelerometer | acceleration (m/s²) |
+| 11–13 | Rotation rate about the car's x, y, z axes | -100 | 100 | IMU gyroscope | angular velocity (rad/s) |
+| 14–17 | Orientation of the car as a quaternion (w, x, y, z) in the world frame | -1 | 1 | IMU | unitless |
+| 18 | Steering angle | -2 | 2 | `steer_cmd_pos` | angle (rad) |
+| 19 | Speed, estimated from the wheel speed | -40 | 40 | motor encoder | velocity (m/s) |
+
+The car's frame is +x forward, +y left and +z up.
+
+### Rewards
+
+The reward for each step is: *reward* = *progress* − *contact_cost* + *end_bonus*.
+
+- *progress*: the angle, in radians, that the car moved around the center of the loop during the step, positive in the forward direction. One lap is worth 2π, about 6.3. It is multiplied by `progress_weight` (default 1).
+- *contact_cost*: `contact_penalty` (default 0.1) if any part of the car touched a wall during the step, else 0.
+- *end_bonus*: on the last step only, +`lap_bonus` (default 10) for a completed lap, −`stuck_penalty` (default 5) if the car got stuck, −`rollover_penalty` (default 10) if it rolled over.
+
+A lap without wall contact therefore returns about 2π + 10 ≈ 16.3, slightly more if the last step goes past 2π. `info` holds `progress_rad` and `lap_frac` (the progress so far, in radians and in laps; negative if the car drove backward), `speed_ms`, `upright_cos`, `contact`, `episode_time_s` and `termination_reason`.
+
+### Starting State
+
+The car starts on the bottom straight at (0, -2.5), facing the forward direction of the loop, and settles for 400 physics steps. `reset()` then moves it sideways by a value from 𝒰(-0.15, 0.15) m, turns it by a value from 𝒰(-0.15, 0.15) rad, and settles it for 50 more physics steps.
+
+### Episode End
+
+#### Termination
+
+The episode terminates when one of these happens, checked in this order:
+
+1. Rollover: the car tilts more than 60° (the cosine of its tilt drops below 0.5).
+2. Stuck: over the last 120 steps (about 4 s), the car's net progress around the loop was less than 0.05 rad in either direction. A car pinned against a wall and a car standing still both count.
+3. Lap: the car's total progress reaches 2π.
+
+#### Truncation
+
+The episode is truncated after 1800 steps (61.2 s of simulated time).
+
+### Arguments
+
+`NeoRacerEnv` is not registered with `gymnasium.make` yet. Create it directly and pass a `NeoRacerEnvConfig`:
 
 ```python
-from neoracer_rl.envs import NeoRacerEnv
+from neoracer_rl.envs import NeoRacerEnv, NeoRacerEnvConfig, RewardConfig
 
-env = NeoRacerEnv()
+env = NeoRacerEnv(NeoRacerEnvConfig(reward=RewardConfig(contact_penalty=0.2)))
 obs, info = env.reset(seed=0)
 obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
-print(info["lap_frac"])  # laps driven so far; negative if the car drove backward
 ```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `car_path` | **str** | neoracer-mujoco's `neoracer.xml` | Path to the car model |
+| `control_hz` | **float** | `30.0` | Target action rate, rounded to whole physics steps (see `Description`) |
+| `max_episode_steps` | **int** | `1800` | Steps before truncation (see `Episode End`) |
+| `spawn` | **SpawnRange** | `lateral_m=0.15, yaw_rad=0.15, resettle_steps=50` | Random start offsets (see `Starting State`) |
+| `termination` | **TerminationConfig** | `upright_rollover_cos=0.5, stuck_window_s=4.0, stuck_progress_rad=0.05` | Rollover and stuck thresholds (see `Episode End`) |
+| `reward` | **RewardConfig** | `progress_weight=1.0, contact_penalty=0.1, rollover_penalty=10.0, stuck_penalty=5.0, lap_bonus=10.0` | Reward weights (see `Rewards`) |
+| `obs_bounds` | **ObservationBounds** | see the table in `Observation Space` | Bounds of the observation space |
+
+`render_mode="human"` is a separate argument of `NeoRacerEnv`. It opens the MuJoCo viewer.
 
 ## Train a policy
 
@@ -57,7 +130,7 @@ random actions          -9.08   20/20 stuck
 zero action             -5.00   20/20 stuck
 ```
 
-A lap is worth at most about 16.3, so the trained policy is close to the limit on this track. Two settings matter. The initial action noise has to be large (standard deviation 1.0), or the policy learns to stop before the first corner. The script also scales the throttle by 0.1, because most of the throttle range is too fast for this track.
+A lap without wall contact returns about 16.3, so the trained policy rarely touches a wall. Two settings matter. The initial action noise has to be large (standard deviation 1.0), or the policy learns to stop before the first corner. The script also scales the throttle by 0.1, because most of the throttle range is too fast for this track.
 
 ## Layout
 

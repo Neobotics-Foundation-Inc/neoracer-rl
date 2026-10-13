@@ -66,7 +66,7 @@ The reward for each step is: *reward* = *progress* − *contact_cost* + *end_bon
 - *contact_cost*: `contact_penalty` (default 0.1) if any part of the car touched a wall during the step, else 0.
 - *end_bonus*: on the last step only, +`lap_bonus` (default 10) for a completed lap, −`stuck_penalty` (default 5) if the car got stuck, −`rollover_penalty` (default 10) if it rolled over.
 
-A clean lap therefore returns at most about 16.3. `info` holds `progress_rad` and `lap_frac` (the progress so far, in radians and in laps; negative if the car drove backward), `speed_ms`, `upright_cos`, `contact`, `episode_time_s` and `termination_reason`.
+A lap without wall contact therefore returns about 2π + 10 ≈ 16.3, slightly more if the last step goes past 2π. `info` holds `progress_rad` and `lap_frac` (the progress so far, in radians and in laps; negative if the car drove backward), `speed_ms`, `upright_cos`, `contact`, `episode_time_s` and `termination_reason`.
 
 ### Starting State
 
@@ -130,7 +130,7 @@ random actions          -9.08   20/20 stuck
 zero action             -5.00   20/20 stuck
 ```
 
-A lap is worth at most about 16.3, so the trained policy is close to the limit on this track. Two settings matter. The initial action noise has to be large (standard deviation 1.0), or the policy learns to stop before the first corner. The script also scales the throttle by 0.1, because most of the throttle range is too fast for this track.
+A lap without wall contact returns about 16.3, so the trained policy rarely touches a wall. Two settings matter. The initial action noise has to be large (standard deviation 1.0), or the policy learns to stop before the first corner. The script also scales the throttle by 0.1, because most of the throttle range is too fast for this track.
 
 ## Layout
 

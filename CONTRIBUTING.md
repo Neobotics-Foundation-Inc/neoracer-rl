@@ -19,3 +19,10 @@ Coding agents read AGENTS.md instead.
 - The simulator itself (the car model, the tracks, the sensors) lives in [neoracer-mujoco](https://github.com/Neobotics-Foundation-Inc/neoracer-mujoco).
   If your change needs something new there, open a pull request in that repo first.
 - Keep one change in one pull request.
+
+## You are responsible for your change
+
+You are responsible for every change you contribute, including code that an AI tool such as Claude or Copilot wrote for you.
+Read and understand all of it before you open a pull request, and be ready to explain any line in review.
+The commit is yours, so do not list an AI tool as a co-author: leave out `Co-authored-by:` lines and "Generated with" footers that name one.
+The `.claude/settings.json` in this repo stops Claude Code from adding them.

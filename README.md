@@ -22,11 +22,11 @@ python -m examples.gymnasium_random_smoke
 
 ## The environment
 
-`NeoRacerEnv` puts the car on `loop_corridor`, a closed loop of walls about 1 m wide. Each step is 1/30 s, the scan rate of the real car's LiDAR.
+`NeoRacerEnv` puts the car on `loop_corridor`, a closed loop of walls about 1 m wide. Each step aims for 1/30 s, the scan rate of the real car's LiDAR. The env rounds that to a whole number of 2 ms physics steps, so a step is 34 ms of simulated time.
 
 The agent sees 20 numbers, all from the car's own sensors: 8 LiDAR distances (m), the IMU's acceleration, rotation rate and orientation, the steering angle and the wheel speed. It chooses 2 numbers between -1 and 1, a throttle and a steering command.
 
-The reward is the angle the car moves around the loop in the forward direction, in radians, so one lap is worth about 6.3. A completed lap adds 10, touching a wall costs 0.1 per step, getting stuck costs 5 and rolling over costs 10. An episode ends when the car completes a lap, makes no progress for 4 s, rolls over, or reaches 60 s.
+The reward is the angle the car moves around the loop in the forward direction, in radians, so one lap is worth about 6.3. A completed lap adds 10, touching a wall costs 0.1 per step, getting stuck costs 5 and rolling over costs 10. An episode ends when the car completes a lap, makes no progress for about 4 s, rolls over, or reaches 1800 steps (about 61 s).
 
 ```python
 from neoracer_rl.envs import NeoRacerEnv

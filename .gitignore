@@ -1,0 +1,20 @@
+# Local-only / reference assets, not part of the project
+scratch/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# MuJoCo
+MUJOCO_LOG.TXT
+
+CLAUDE.md
+
+# Generated validation output (not source), e.g. Stage D trial results
+**/*.pkl
+
+# Generated mujoco type stubs (pybind11-stubgen, see the typecheck workflow)
+typings/

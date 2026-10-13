@@ -40,8 +40,8 @@ import numpy as np
 import numpy.typing as npt
 import optax
 
-from neoracer_mujoco.envs import NeoRacerEnv
-from neoracer_mujoco.envs.neoracer_env import OBS_DIM, EnvInfo, TerminationReason
+from neoracer_rl.envs import NeoRacerEnv
+from neoracer_rl.envs.neoracer_env import OBS_DIM, EnvInfo, TerminationReason
 
 ACTION_DIM = 2  # (throttle, steer), see neoracer_env.py
 

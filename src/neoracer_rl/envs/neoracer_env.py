@@ -2,11 +2,11 @@
 Gymnasium environment for the NeoRacer MuJoCo car.
 
 This module gives the NeoRacer simulator the Gymnasium Env API. It uses the
-toolbox modules (assets, sim, sensors, collision, contract) and adds no
-physics, sensors or actuator mappings. The classical controllers in control/
-drive the same simulator.
+neoracer_mujoco modules (assets, sim, sensors, collision, contract) and adds
+no physics, sensors or actuator mappings. The classical controllers in
+neoracer_mujoco.control drive the same simulator.
 
-Frame: +X forward, +Y left, +Z up (see assets/neoracer.xml).
+Frame: +X forward, +Y left, +Z up (see neoracer-mujoco's assets/neoracer.xml).
 
 Track: assets/tracks/loop_corridor.xml only.
 
@@ -63,9 +63,8 @@ import mujoco.viewer
 import numpy as np
 import numpy.typing as npt
 from gymnasium import spaces
-
-from .. import assets, collision, contract, sensors, sim
-from ..control.steering import ControlCommand
+from neoracer_mujoco import assets, collision, contract, sensors, sim
+from neoracer_mujoco.control.steering import ControlCommand
 
 # The spawn offset, the progress around the world origin, the lap and the
 # reward are specific to the geometry of this one track.

@@ -1,5 +1,5 @@
 """
-Run random actions in neoracer_mujoco.envs.NeoRacerEnv for a fixed number of episodes.
+Run random actions in neoracer_rl.envs.NeoRacerEnv for a fixed number of episodes.
 
 This script is a smoke test of the environment interface. It does not train
 a policy, and it does not measure performance.
@@ -17,8 +17,8 @@ from typing import Literal
 
 import numpy as np
 
-from neoracer_mujoco.envs import NeoRacerEnv
-from neoracer_mujoco.envs.neoracer_env import TerminationReason
+from neoracer_rl.envs import NeoRacerEnv
+from neoracer_rl.envs.neoracer_env import TerminationReason
 
 type Outcome = TerminationReason | Literal["truncated", "max_steps"]
 

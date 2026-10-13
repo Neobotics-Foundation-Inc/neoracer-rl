@@ -25,8 +25,8 @@ from examples.train_ppo import (
     save_policy,
     update_obs_stats,
 )
-from neoracer_mujoco.envs import NeoRacerEnv
-from neoracer_mujoco.envs.neoracer_env import OBS_DIM
+from neoracer_rl.envs import NeoRacerEnv
+from neoracer_rl.envs.neoracer_env import OBS_DIM
 
 
 def _reward_to_go(rewards: np.ndarray, dones: np.ndarray) -> np.ndarray:

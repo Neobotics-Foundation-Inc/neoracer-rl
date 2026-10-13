@@ -1,0 +1,12 @@
+extend-exclude = ["users"]
+
+# A frozen dataclass with immutable fields is a safe default value
+# (AGENTS.md rule 1: `params: Params = Params()`). ruff B008 does not know this
+# yet (https://github.com/astral-sh/ruff/issues/29071). RUF009 knows it only
+# for a class in the same module. List here each frozen config class that is a
+# default in another module, or a function default. When ruff fixes this,
+# remove this section.
+[lint.flake8-bugbear]
+extend-immutable-calls = [
+  "neoracer_rl.envs.neoracer_env.NeoRacerEnvConfig",
+]

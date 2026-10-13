@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "neoracer-rl"
+version = "0.1.0"
+description = "Gymnasium environments and example learning algorithms for the NeoRacer 1/12-scale RC car simulator."
+readme = "README.md"
+requires-python = ">=3.15"
+dependencies = [
+    # The simulator: the car model, the tracks and the sensors. The wheel
+    # contains the meshes, so a student does not need Git LFS.
+    "neoracer-mujoco @ https://github.com/Neobotics-Foundation-Inc/neoracer-mujoco/releases/download/v0.2.0/neoracer_mujoco-0.2.0-py3-none-any.whl",
+    "gymnasium>=1.0",
+    # JAX and optax, not PyTorch: PyTorch has no wheels for Python 3.15.
+    "jax>=0.11",
+    "optax>=0.2.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "ruff==0.17.0",
+    "ty==0.0.86",
+    "pybind11-stubgen==3.0.0",
+]
+
+[tool.hatch.metadata]
+# neoracer-mujoco is installed from its GitHub Release, not from PyPI.
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/neoracer_rl"]
+
+[tool.pytest.ini_options]
+# A bare `pytest` runs only the test suite. users/ holds experiments that are
+# not tests; `pytest users/<name>` still runs a folder on purpose.
+testpaths = ["validation"]
+
+[tool.ty.environment]
+# typings/ holds mujoco stubs from `pybind11-stubgen mujoco mujoco.viewer -o typings`.
+# The examples directory is on sys.path at runtime for the tests that import from it.
+extra-paths = ["typings", "examples"]
+
+[tool.ty.src]
+exclude = ["users", "typings"]

@@ -1,5 +1,5 @@
 """
-Tests for neoracer_mujoco.envs.NeoRacerEnv: the Gymnasium environment
+Tests for neoracer_rl.envs.NeoRacerEnv: the Gymnasium environment
 interface. These tests do not train a policy. validation/test_train_ppo.py
 tests the PPO baseline.
 
@@ -17,9 +17,9 @@ import numpy as np
 import pytest
 from gymnasium import spaces
 from gymnasium.utils.env_checker import check_env
-
 from neoracer_mujoco import assets, sim
-from neoracer_mujoco.envs import (
+
+from neoracer_rl.envs import (
     NeoRacerEnv,
     NeoRacerEnvConfig,
     RewardConfig,

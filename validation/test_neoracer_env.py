@@ -55,7 +55,7 @@ def test_env_rejects_a_car_without_a_free_joint(tmp_path):
     )
     car = tmp_path / "no_freejoint.xml"
     car.write_text(xml)
-    with pytest.raises(ValueError, match="needs one free joint"):
+    with pytest.raises(ValueError, match="free joint"):
         NeoRacerEnv(NeoRacerEnvConfig(car_path=str(car)))
 
 
@@ -325,10 +325,10 @@ def test_rollover_terminates(env):
     # A 90 degree rotation about the body X axis turns the car +Z axis to
     # world -Y. So upright_cos becomes 0, below upright_rollover_cos.
     half = np.pi / 4.0  # rad, half of the rotation angle
-    env.data.qpos[3:7] = [np.cos(half), np.sin(half), 0.0, 0.0]
+    env.data.qpos[env.scene.car.qpos][3:7] = [np.cos(half), np.sin(half), 0.0, 0.0]
     mujoco.mj_forward(env.model, env.data)
     assert (
-        sim.car_upright_cos(env.data, env.model.body("car").id)
+        sim.car_upright_cos(env.data, env.scene.car.body)
         < env.config.termination.upright_rollover_cos
     )
 

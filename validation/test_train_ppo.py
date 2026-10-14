@@ -1,6 +1,6 @@
 """
 Laws for the PPO baseline (examples/train_ppo.py): GAE, the clipped loss,
-the observation statistics, and a short training run on NeoRacerEnv.
+the observation statistics, and a short training run on NeoRacerBatch.
 """
 
 import jax
@@ -24,7 +24,7 @@ from examples.train_ppo import (
     save_policy,
     update_obs_stats,
 )
-from neoracer_rl.envs import NeoRacerEnv
+from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
 from neoracer_rl.envs.neoracer_env import OBS_DIM
 
 
@@ -154,18 +154,19 @@ def test_running_obs_stats_match_numpy_over_all_batches(seed):
 
 def test_short_training_run_changes_the_params_and_keeps_them_finite(tmp_path):
     params = PPOParams(rollout_steps=128, epochs=2, minibatches=2, hidden=(16,))
-    envs = [NeoRacerEnv() for _ in range(2)]
-    obs = np.stack([env.reset(seed=i)[0] for i, env in enumerate(envs)]).astype(
-        np.float64
-    )
+    env = NeoRacerBatch(Cpu(nthread=0), nbatch=2)
     state = RolloutState(
-        obs, np.zeros(2), np.zeros(2, dtype=np.int64), empty_obs_stats()
+        env.reset(np.random.default_rng(0)),
+        np.zeros(2),
+        np.zeros(2, dtype=np.int64),
+        empty_obs_stats(),
     )
     net = init_actor_critic(jax.random.key(1), params)
     opt_state = init_opt_state(net, params)
     start = net
     # One update from 128 * 2 = 256 env steps.
-    batch, state, _ = collect_rollout(envs, state, net, jax.random.key(10), params)
+    batch, state, _ = collect_rollout(env, state, net, jax.random.key(10), params)
+    env.close()
     net, opt_state, info = ppo_update(net, opt_state, batch, jax.random.key(20), params)
     assert all(np.isfinite(float(x)) for x in jax.tree.leaves(info))
     leaves, start_leaves = jax.tree.leaves(net), jax.tree.leaves(start)

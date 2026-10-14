@@ -33,6 +33,9 @@ Observation space -- Box(20,), float32, built only from sensors.SensorReadings
 
 Control rate: 30 Hz, the target LiDAR scan rate of the real hardware.
 __init__ computes the physics steps per action from model.opt.timestep.
+Each step starts MuJoCo's constraint solver cold (qacc_warmstart = 0), as
+mujoco.rollout does, so a row of NeoRacerBatch on the CPU backend steps the
+same as this env, bit for bit.
 
 Reward (RewardConfig, all weights explicit and UNTUNED, see reward):
     r_t = progress_weight * delta_theta_t
@@ -64,8 +67,9 @@ import mujoco.viewer
 import numpy as np
 import numpy.typing as npt
 from gymnasium import spaces
-from neoracer_mujoco import assets, collision, contract, sensors, sim
+from neoracer_mujoco import assets, batch, collision, contract, sensors, sim
 from neoracer_mujoco.control.steering import ControlCommand
+from neoracer_mujoco.scene import Car, Scene
 
 # The spawn offset, the progress around the world origin, the lap and the
 # reward are specific to the geometry of this one track.
@@ -78,6 +82,7 @@ _LOOP_SPAWN_OFFSET = (0.0, -2.5, 0.0)
 
 OBS_DIM = 20
 type Observation = npt.NDArray[np.float32]  # shape (OBS_DIM,), see module docstring
+type SensorData = npt.NDArray[np.float64]  # shape (..., nsensordata)
 
 _ACTION_LOW = np.array([-1.0, -1.0], dtype=np.float32)
 _ACTION_HIGH = np.array([1.0, 1.0], dtype=np.float32)
@@ -186,6 +191,27 @@ class NeoRacerEnvConfig:
             )
 
 
+def loop_scene(config: NeoRacerEnvConfig) -> Scene:
+    """The car of config on loop_corridor.xml, at the spawn position."""
+    # compose raises ValueError if the car has no free joint or misses an
+    # actuator or sensor.
+    return assets.compose(
+        mujoco.MjSpec.from_file(_TRACK), config.car_path, _LOOP_SPAWN_OFFSET
+    )
+
+
+def substeps_per_action(config: NeoRacerEnvConfig, model: mujoco.MjModel) -> int:
+    """The physics steps in one env step: the closest whole number to one
+    control period."""
+    return max(1, round((1.0 / config.control_hz) / model.opt.timestep))
+
+
+def stuck_window_len(config: NeoRacerEnvConfig) -> int:
+    """The number of totals in the stuck window: one more than the steps in
+    stuck_window_s."""
+    return max(1, round(config.termination.stuck_window_s * config.control_hz)) + 1
+
+
 def _observation_space(b: ObservationBounds) -> spaces.Box:
     low = np.concatenate(
         [
@@ -208,6 +234,66 @@ def _observation_space(b: ObservationBounds) -> spaces.Box:
         ]
     ).astype(np.float32)
     return spaces.Box(low=low, high=high, shape=(OBS_DIM,), dtype=np.float32)
+
+
+def observation(
+    model: mujoco.MjModel, car: Car, sensordata: SensorData
+) -> npt.NDArray[np.float32]:
+    """The observation (..., OBS_DIM) in sensordata (..., nsensordata), from
+    the car's sensors only. See the module docstring for the layout."""
+    s = car.sensors
+
+    def read(*sensors: mujoco.MjsSensor) -> SensorData:
+        return np.concatenate([batch.read(model, sensordata, x) for x in sensors], -1)
+
+    lidar = read(
+        s.lidar_000,
+        s.lidar_045,
+        s.lidar_090,
+        s.lidar_135,
+        s.lidar_180,
+        s.lidar_225,
+        s.lidar_270,
+        s.lidar_315,
+    )
+    wheels = read(s.fl_wheel_vel, s.fr_wheel_vel, s.rl_wheel_vel, s.rr_wheel_vel)
+    # The mean wheel speed (rad/s) is sensors.motor_encoder_rad_s, the reading
+    # of the car's one motor encoder, and the speed (m/s) is
+    # sensors.estimated_linear_speed_ms of it.
+    motor = (wheels[..., 0] + wheels[..., 1] + wheels[..., 2] + wheels[..., 3]) / 4
+    speed = (motor * sensors.WHEEL_RADIUS)[..., None]
+    parts = (lidar, read(s.imu_accel, s.imu_gyro, s.imu_quat, s.steer_cmd_pos), speed)
+    return np.concatenate([p.astype(np.float32) for p in parts], -1)
+
+
+def angle_around_center(
+    model: mujoco.MjModel, car: Car, sensordata: SensorData
+) -> npt.NDArray[np.float64]:
+    """The angle (rad) of the car's position around the world origin, the
+    center of the loop, shape (...,)."""
+    pos = batch.read(model, sensordata, car.truth.pos)
+    return np.arctan2(pos[..., 1], pos[..., 0])
+
+
+def apply_spawn_offset(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    car: Car,
+    spawn: SpawnRange,
+    rng: np.random.Generator,
+) -> None:
+    """Move the car in data sideways and turn it, by random amounts within
+    spawn, then step spawn.resettle_steps physics steps to settle the
+    suspension."""
+    lateral = float(rng.uniform(-spawn.lateral_m, spawn.lateral_m))
+    yaw = float(rng.uniform(-spawn.yaw_rad, spawn.yaw_rad))
+    # The car's free joint in qpos, a view: (x, y, z, qw, qx, qy, qz).
+    qpos = data.bind_scalar(car.joint).qpos
+    qpos[1] += lateral
+    qpos[3:7] = _compose_yaw_perturbation(qpos[3:7], yaw)
+    mujoco.mj_forward(model, data)
+    for _ in range(spawn.resettle_steps):
+        mujoco.mj_step(model, data)
 
 
 @dataclass(frozen=True)
@@ -306,23 +392,19 @@ class NeoRacerEnv(gym.Env):
             raise ValueError(f"Unsupported render_mode: {render_mode!r}")
         self.render_mode = render_mode
 
-        # compose raises ValueError if the car has no free joint or misses an
-        # actuator or sensor. scene.car holds the car's parts as spec elements,
-        # which the env binds to self.data where it reads or writes them.
-        self.scene = assets.compose(
-            mujoco.MjSpec.from_file(_TRACK), config.car_path, _LOOP_SPAWN_OFFSET
-        )
+        # scene.car holds the car's parts as spec elements, which the env
+        # binds to self.data where it reads or writes them.
+        self.scene = loop_scene(config)
         self.model = self.scene.model
         self.data = mujoco.MjData(self.model)
         self._car = self.scene.car
 
-        physics_dt = float(self.model.opt.timestep)
-        self._substeps_per_action = max(
-            1, round((1.0 / config.control_hz) / physics_dt)
-        )
+        self._substeps_per_action = substeps_per_action(config, self.model)
         # The true control period, after rounding to a whole number of
         # physics substeps. It can differ slightly from 1/control_hz.
-        self.effective_control_dt = self._substeps_per_action * physics_dt
+        self.effective_control_dt = self._substeps_per_action * float(
+            self.model.opt.timestep
+        )
 
         self._limits = contract.actuator_limits(self.model, self._car)
         self._max_torque = config.throttle_scale * self._limits.torque_nm  # N·m
@@ -332,9 +414,7 @@ class NeoRacerEnv(gym.Env):
         )
         self.observation_space = _observation_space(config.obs_bounds)
 
-        self._stuck_window_ticks = max(
-            1, round(config.termination.stuck_window_s * config.control_hz)
-        )
+        self._window_len = stuck_window_len(config)
 
         self._viewer = None
 
@@ -346,20 +426,12 @@ class NeoRacerEnv(gym.Env):
     # --- internal helpers -----------------------------------------------
 
     def _angle_around_center(self) -> float:
-        """Angle (rad) of the car's position around the world origin."""
-        xpos = self.data.bind_scalar(self._car.body).xpos
-        return float(np.arctan2(xpos[1], xpos[0]))
+        return float(angle_around_center(self.model, self._car, self.data.sensordata))
 
     def _build_observation(self) -> tuple[Observation, float]:
         """The observation, and the estimated speed (m/s) in it."""
-        readings = sensors.read(self._car.sensors, self.data)
-        lidar = sensors.lidar_ranges(readings).astype(np.float32)
-        accel = readings.imu_accel.astype(np.float32)
-        gyro = readings.imu_gyro.astype(np.float32)
-        quat = readings.imu_quat.astype(np.float32)
-        speed = sensors.estimated_linear_speed_ms(sensors.motor_encoder_rad_s(readings))
-        scalars = np.array([readings.steer_cmd_pos, speed], dtype=np.float32)
-        return np.concatenate([lidar, accel, gyro, quat, scalars]), speed
+        obs = observation(self.model, self._car, self.data.sensordata)
+        return obs, float(obs[OBS_DIM - 1])
 
     def _build_info(
         self,
@@ -386,23 +458,9 @@ class NeoRacerEnv(gym.Env):
         mujoco.mj_resetData(self.model, self.data)
         sim.apply_ctrl_and_step(self.model, self.data, 0.0, sim.SETTLE_STEPS)
 
-        lateral = float(
-            self.np_random.uniform(
-                -self.config.spawn.lateral_m, self.config.spawn.lateral_m
-            )
+        apply_spawn_offset(
+            self.model, self.data, self._car, self.config.spawn, self.np_random
         )
-        yaw = float(
-            self.np_random.uniform(
-                -self.config.spawn.yaw_rad, self.config.spawn.yaw_rad
-            )
-        )
-        # The car's free joint in qpos, a view: (x, y, z, qw, qx, qy, qz).
-        qpos = self.data.bind_scalar(self._car.joint).qpos
-        qpos[1] += lateral
-        qpos[3:7] = _compose_yaw_perturbation(qpos[3:7], yaw)
-        mujoco.mj_forward(self.model, self.data)
-        for _ in range(self.config.spawn.resettle_steps):
-            mujoco.mj_step(self.model, self.data)
 
         self._step_count = 0
         self._progress = start_progress(self._angle_around_center())
@@ -427,6 +485,7 @@ class NeoRacerEnv(gym.Env):
             ),
         )
 
+        self.data.qacc_warmstart[:] = 0
         contact_this_tick = False
         for _ in range(self._substeps_per_action):
             mujoco.mj_step(self.model, self.data)
@@ -434,7 +493,7 @@ class NeoRacerEnv(gym.Env):
                 contact_this_tick = True
 
         self._step_count += 1
-        window_len = self._stuck_window_ticks + 1
+        window_len = self._window_len
         self._progress = advance(
             self._progress, self._angle_around_center(), window_len
         )

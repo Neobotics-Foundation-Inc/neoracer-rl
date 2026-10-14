@@ -113,9 +113,50 @@ obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 
 `render_mode="human"` is a separate argument of `NeoRacerEnv`. It opens the MuJoCo viewer.
 
+## Many environments at once
+
+`NeoRacerBatch` runs many episodes of the same environment together, one per row. Each row has the actions, observations, rewards and episode ends of `NeoRacerEnv`, and takes the same `NeoRacerEnvConfig`. It has no Gymnasium API: `reset` returns a state, and `step` takes a state and one action per row and returns the next state and what the step gave. A row whose episode ends starts over in the same step, so `out.obs` is the last observation of that episode and `state.obs` the first of the next.
+
+A row starts over from the spawn that the last `reset` or `respawn` drew for it. Call `env.respawn(state, rng)` now and then, for example once per PPO update, so that the rows see as many spawns as `NeoRacerEnv` does.
+
+You choose where the physics runs.
+
+### Optimized for CPU
+
+`Cpu` steps the rows with `mujoco.rollout` on `nthread` threads; one per core uses the whole CPU. A row then steps exactly like `NeoRacerEnv` from the same spawn.
+
+```python
+import numpy as np
+
+from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
+
+env = NeoRacerBatch(Cpu(nthread=4), nbatch=64)
+rng = np.random.default_rng(0)
+state = env.reset(rng)
+state, out = env.step(state, rng.uniform(-1, 1, (64, 2)))
+print(out.obs.shape, out.reward.shape, out.done.sum())  # (64, 20) (64,) 0
+env.close()
+```
+
+### Optimized for GPU
+
+`Warp` steps the rows with MJX on MuJoCo Warp, on a CUDA GPU. Install the `warp` extra and the CUDA build of JAX:
+
+```sh
+uv pip install -e ".[dev,warp]" "jax[cuda12]"
+```
+
+```python
+from neoracer_rl.envs.neoracer_batch import NeoRacerBatch, Warp
+
+env = NeoRacerBatch(Warp(), nbatch=4096)
+```
+
+The arrays that go in and out are numpy arrays on both backends. Warp computes collisions and constraints with its own code, so its rows are close to `NeoRacerEnv`, not equal. Without a GPU, JAX runs Warp on the CPU, correctly but much more slowly than `Cpu`.
+
 ## Train a policy
 
-`examples/train_ppo.py` trains a policy with PPO (proximal policy optimization), a common policy-gradient method. It runs 8 copies of the environment and prints one line per update, with how many episodes ended in a lap, got stuck or rolled over.
+`examples/train_ppo.py` trains a policy with PPO (proximal policy optimization), a common policy-gradient method. It runs 8 environments in a `NeoRacerBatch` on the CPU and prints one line per update, with how many episodes ended in a lap, a crash, got stuck or rolled over. On a GPU, add `--backend warp` and raise `--num-envs`. The evaluation runs `NeoRacerEnv`.
 
 ```sh
 python -m examples.train_ppo --total-steps 300000 --seed 0 --out ppo.npz
@@ -138,7 +179,7 @@ A lap without wall contact returns about 16.3, so the trained policy rarely touc
 ## Layout
 
 ```
-src/neoracer_rl/envs/   NeoRacerEnv and its reward, progress and termination functions
+src/neoracer_rl/envs/   NeoRacerEnv, NeoRacerBatch, and their reward, progress and termination functions
 examples/               training, and a run with random actions
 validation/             pytest tests
 users/<name>/           personal experiments, not checked by ruff, ty, the tests or CI

@@ -1,5 +1,6 @@
 """
-Train a PPO policy on NeoRacerEnv, or evaluate a saved policy.
+Train a PPO policy on NeoRacerBatch, or evaluate a saved policy on
+NeoRacerEnv.
 
 PPO (proximal policy optimization) is a policy-gradient method.
 It collects a batch of steps with the current policy, then makes a few
@@ -11,6 +12,11 @@ and a learned vector gives the log standard deviation. env.step() clips each
 sampled action to [-1, 1]; the log probability uses the unclipped sample.
 A second MLP (the critic) estimates the value of an observation.
 
+Training steps every environment at once with NeoRacerBatch, on the backend
+that --backend names: cpu (mujoco.rollout on CPU threads) or warp (MuJoCo
+Warp, for a CUDA GPU; it needs the warp extra). Evaluation runs the
+Gymnasium env NeoRacerEnv, one episode at a time.
+
 The script normalizes each observation with a running mean and variance,
 because the LiDAR value -1 (no hit) and the large IMU ranges otherwise
 dominate the input of the MLP.
@@ -21,16 +27,18 @@ the environments, print the log and read or write the .npz file.
 
 Usage:
     python3 -m examples.train_ppo --total-steps 1000000 --seed 0 --out ppo.npz
+    python3 -m examples.train_ppo --backend warp --num-envs 1024 --out ppo.npz
     python3 -m examples.train_ppo --eval ppo.npz --episodes 10
     python3 -m examples.train_ppo --eval-baseline random --episodes 10
 """
 
 import argparse
 import functools
+import os
 import time
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, assert_never, cast
 
 import jax
@@ -40,6 +48,14 @@ import numpy.typing as npt
 import optax
 
 from neoracer_rl.envs import NeoRacerEnv
+from neoracer_rl.envs.neoracer_batch import (
+    REASONS,
+    Backend,
+    BatchState,
+    Cpu,
+    NeoRacerBatch,
+    Warp,
+)
 from neoracer_rl.envs.neoracer_env import OBS_DIM, EnvInfo, TerminationReason
 
 ACTION_DIM = 2  # (throttle, steer), see neoracer_env.py
@@ -348,7 +364,7 @@ class EpisodeResult:
 class RolloutState:
     """The state that a rollout carries to the next rollout."""
 
-    obs: npt.NDArray[np.float64]  # raw observation of each env, shape (N, OBS_DIM)
+    env: BatchState  # the episode of each env
     episode_return: npt.NDArray[np.float64]  # return so far of each env, shape (N,)
     episode_steps: npt.NDArray[np.int64]  # steps so far of each env, shape (N,)
     stats: ObsStats
@@ -362,27 +378,27 @@ def _outcome(info: EnvInfo) -> Outcome:
 
 
 def collect_rollout(
-    envs: list[NeoRacerEnv],
+    env: NeoRacerBatch,
     state: RolloutState,
     net: ActorCritic,
     key: jax.Array,
     params: PPOParams,
 ) -> tuple[Batch, RolloutState, list[EpisodeResult]]:
     """Step every env params.rollout_steps times with the sampled policy.
-    The function resets an env when its episode ends.
+    An env whose episode ends starts over in the same step.
 
     On truncation, the reward of the last step gets gamma * V(final observation),
     so that the time limit does not look like a terminal state to GAE.
     """
-    t_len, n = params.rollout_steps, len(envs)
+    t_len, n = params.rollout_steps, env.nbatch
     obs_buf = np.zeros((t_len, n, OBS_DIM), dtype=np.float32)
     act_buf = np.zeros((t_len, n, ACTION_DIM), dtype=np.float32)
     logp_buf = np.zeros((t_len, n), dtype=np.float32)
     val_buf = np.zeros((t_len, n), dtype=np.float32)
     rew_buf = np.zeros((t_len, n), dtype=np.float32)
     done_buf = np.zeros((t_len, n), dtype=np.float32)
-    raw_obs, ep_ret, ep_steps, stats = (
-        state.obs.copy(),
+    env_state, ep_ret, ep_steps, stats = (
+        state.env,
         state.episode_return.copy(),
         state.episode_steps.copy(),
         state.stats,
@@ -391,35 +407,34 @@ def collect_rollout(
     step_keys = jax.random.split(key, t_len)
 
     for t in range(t_len):
+        raw_obs = env_state.obs.astype(np.float64)
         stats = update_obs_stats(stats, raw_obs)
         obs = normalize_obs(stats, raw_obs, params.obs_clip)
         action, logp, val = sample_action(net, jnp.asarray(obs), step_keys[t])
         action_np = np.asarray(action)
         obs_buf[t], act_buf[t], logp_buf[t], val_buf[t] = obs, action_np, logp, val
-        for i, env in enumerate(envs):
-            next_obs, reward, terminated, truncated, info = env.step(action_np[i])
-            ep_ret[i] += reward
-            ep_steps[i] += 1
-            rew_buf[t, i] = reward
-            if terminated or truncated:
-                done_buf[t, i] = 1.0
-                if truncated:
-                    final = normalize_obs(stats, next_obs[None], params.obs_clip)
-                    rew_buf[t, i] += params.gamma * float(
-                        value(net, jnp.asarray(final))[0]
-                    )
-                finished.append(
-                    EpisodeResult(
-                        float(ep_ret[i]),
-                        info["lap_frac"],
-                        _outcome(info),
-                        int(ep_steps[i]),
-                    )
+        env_state, out = env.step(env_state, action_np)
+        ep_ret += out.reward
+        ep_steps += 1
+        rew_buf[t] = out.reward
+        done_buf[t] = out.done
+        if out.truncated.any():
+            final = normalize_obs(stats, out.obs.astype(np.float64), params.obs_clip)
+            final_value = np.asarray(value(net, jnp.asarray(final)))
+            rew_buf[t] += np.where(out.truncated, params.gamma * final_value, 0.0)
+        for i in np.flatnonzero(out.done):
+            code = int(out.reason[i])
+            finished.append(
+                EpisodeResult(
+                    float(ep_ret[i]),
+                    float(out.lap_frac[i]),
+                    REASONS[code - 1] if code else "truncated",
+                    int(ep_steps[i]),
                 )
-                ep_ret[i], ep_steps[i] = 0.0, 0
-                next_obs, _ = env.reset()
-            raw_obs[i] = next_obs
+            )
+        ep_ret[out.done], ep_steps[out.done] = 0.0, 0
 
+    raw_obs = env_state.obs.astype(np.float64)
     last_obs = normalize_obs(stats, raw_obs, params.obs_clip)
     last_value = value(net, jnp.asarray(last_obs))
     advantage, target = gae(
@@ -437,7 +452,7 @@ def collect_rollout(
         advantage=advantage.reshape(-1),
         target=target.reshape(-1),
     )
-    return batch, RolloutState(raw_obs, ep_ret, ep_steps, stats), finished
+    return batch, RolloutState(env_state, ep_ret, ep_steps, stats), finished
 
 
 @dataclass(frozen=True)
@@ -467,20 +482,18 @@ def format_log(log: UpdateLog, steps_per_s: float) -> str:
 
 
 def train(
-    params: PPOParams, total_steps: int, seed: int, num_envs: int
+    params: PPOParams, total_steps: int, seed: int, num_envs: int, backend: Backend
 ) -> tuple[ActorCritic, ObsStats]:
     """Train for at least total_steps env steps. Print one log line per update.
-    Env i starts from seed * 1000 + i."""
+    The spawns come from default_rng(seed); each update draws new ones."""
     key = jax.random.key(seed)
     key, init_key = jax.random.split(key)
     net = init_actor_critic(init_key, params)
     opt_state = init_opt_state(net, params)
-    envs = [NeoRacerEnv() for _ in range(num_envs)]
-    first_obs = np.stack(
-        [env.reset(seed=seed * 1000 + i)[0] for i, env in enumerate(envs)]
-    )
+    env = NeoRacerBatch(backend, num_envs)
+    spawn_rng = np.random.default_rng(seed)
     state = RolloutState(
-        obs=first_obs.astype(np.float64),
+        env=env.reset(spawn_rng),
         episode_return=np.zeros(num_envs),
         episode_steps=np.zeros(num_envs, dtype=np.int64),
         stats=empty_obs_stats(),
@@ -490,7 +503,8 @@ def train(
     for update in range(1, updates + 1):
         start = time.perf_counter()
         key, rollout_key, update_key = jax.random.split(key, 3)
-        batch, state, finished = collect_rollout(envs, state, net, rollout_key, params)
+        batch, state, finished = collect_rollout(env, state, net, rollout_key, params)
+        state = replace(state, env=env.respawn(state.env, spawn_rng))
         net, opt_state, loss = ppo_update(net, opt_state, batch, update_key, params)
         log = UpdateLog(
             update=update,
@@ -503,8 +517,7 @@ def train(
             format_log(log, steps_per_update / (time.perf_counter() - start)),
             flush=True,
         )
-    for env in envs:
-        env.close()
+    env.close()
     return net, state.stats
 
 
@@ -623,6 +636,16 @@ def print_eval(name: str, results: list[EpisodeResult], first_seed: int) -> None
     )
 
 
+def parse_backend(text: str) -> Literal["cpu", "warp"]:
+    match text:
+        case "cpu" | "warp":
+            return text
+        case _:
+            raise argparse.ArgumentTypeError(
+                f"backend must be cpu or warp, not {text!r}"
+            )
+
+
 def parse_baseline(text: str) -> Baseline:
     match text:
         case "random" | "zero":
@@ -638,6 +661,15 @@ def main() -> None:
     parser.add_argument("--total-steps", type=int, default=1_000_000, help="env steps")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num-envs", type=int, default=8)
+    parser.add_argument(
+        "--backend", type=parse_backend, default="cpu", help="cpu or warp (GPU)"
+    )
+    parser.add_argument(
+        "--nthread",
+        type=int,
+        default=os.cpu_count() or 1,
+        help="CPU threads that step the envs, with --backend cpu",
+    )
     parser.add_argument("--out", help="save the trained policy to this .npz file")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--eval", metavar="PATH", help="evaluate a saved policy")
@@ -674,9 +706,18 @@ def main() -> None:
 
     print(f"[train_ppo] {params}")
     print(
-        f"[train_ppo] total_steps={args.total_steps} seed={args.seed} num_envs={args.num_envs}"
+        f"[train_ppo] total_steps={args.total_steps} seed={args.seed} "
+        f"num_envs={args.num_envs} backend={args.backend}"
     )
-    net, stats = train(params, args.total_steps, args.seed, args.num_envs)
+    kind: Literal["cpu", "warp"] = args.backend
+    match kind:
+        case "cpu":
+            backend: Backend = Cpu(nthread=min(args.nthread, args.num_envs))
+        case "warp":
+            backend = Warp()
+        case _:
+            assert_never(kind)
+    net, stats = train(params, args.total_steps, args.seed, args.num_envs, backend)
     if args.out is not None:
         save_policy(args.out, net, stats)
         print(f"[train_ppo] saved the policy to {args.out}")

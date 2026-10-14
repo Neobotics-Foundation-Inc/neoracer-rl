@@ -30,7 +30,7 @@ python -m examples.random_actions
 
 ### Description
 
-The car drives on `loop_corridor`, a closed corridor about 1 m wide. The goal is to complete one lap counterclockwise (seen from above) without rolling over or getting stuck. The agent sees only what the real car's sensors measure, and nothing from the simulator's internal state, so a policy trained here can in principle run on the car.
+The car drives on `loop_corridor`, a closed corridor about 1 m wide. The goal is to complete one lap counterclockwise (seen from above) without touching a wall, rolling over or getting stuck. The agent sees only what the real car's sensors measure, and nothing from the simulator's internal state, so a policy trained here can in principle run on the car.
 
 Each step applies one action for 17 physics steps of 2 ms, so a step is 34 ms of simulated time. That is the closest whole number of physics steps to 1/30 s, the scan rate of the car's LiDAR.
 
@@ -60,13 +60,14 @@ The car's frame is +x forward, +y left and +z up.
 
 ### Rewards
 
-The reward for each step is: *reward* = *progress* − *contact_cost* + *end_bonus*.
+The reward for each step is: *reward* = *progress* + *end_bonus*.
 
 - *progress*: the angle, in radians, that the car moved around the center of the loop during the step, positive in the forward direction. One lap is worth 2π, about 6.3. It is multiplied by `progress_weight` (default 1).
-- *contact_cost*: `contact_penalty` (default 0.1) if any part of the car touched a wall during the step, else 0.
-- *end_bonus*: on the last step only, +`lap_bonus` (default 10) for a completed lap, −`stuck_penalty` (default 5) if the car got stuck, −`rollover_penalty` (default 10) if it rolled over.
+- *end_bonus*: on the last step only, +`lap_bonus` (default 10) for a completed lap, −`crash_penalty` (default 5) if the car hit a wall, −`stuck_penalty` (default 5) if it got stuck, −`rollover_penalty` (default 10) if it rolled over.
 
-A lap without wall contact therefore returns about 2π + 10 ≈ 16.3, slightly more if the last step goes past 2π. `info` holds `progress_rad` and `lap_frac` (the progress so far, in radians and in laps; negative if the car drove backward), `speed_ms`, `upright_cos`, `contact`, `episode_time_s` and `termination_reason`.
+The crash and stuck penalties are equal, so a car that drives toward the first corner and hits the wall returns more than a car that never moves. If hitting the wall cost more than standing still, "do not move" would be a trap that a learner has to climb out of.
+
+A lap therefore returns about 2π + 10 ≈ 16.3, slightly more if the last step goes past 2π. `info` holds `progress_rad` and `lap_frac` (the progress so far, in radians and in laps; negative if the car drove backward), `speed_ms`, `upright_cos`, `contact`, `episode_time_s` and `termination_reason`.
 
 ### Starting State
 
@@ -79,8 +80,9 @@ The car starts on the bottom straight at (0, -2.5), facing the forward direction
 The episode terminates when one of these happens, checked in this order:
 
 1. Rollover: the car tilts more than 60° (the cosine of its tilt drops below 0.5).
-2. Stuck: over the last 120 steps (about 4 s), the car's net progress around the loop was less than 0.05 rad in either direction. A car pinned against a wall and a car standing still both count.
-3. Lap: the car's total progress reaches 2π.
+2. Crash: any part of the car touches a wall.
+3. Stuck: over the last 120 steps (about 4 s), the car's net progress around the loop was less than 0.05 rad in either direction. A car standing still counts.
+4. Lap: the car's total progress reaches 2π.
 
 #### Truncation
 
@@ -93,7 +95,7 @@ The episode is truncated after 1800 steps (61.2 s of simulated time).
 ```python
 from neoracer_rl.envs import NeoRacerEnv, NeoRacerEnvConfig, RewardConfig
 
-env = NeoRacerEnv(NeoRacerEnvConfig(reward=RewardConfig(contact_penalty=0.2)))
+env = NeoRacerEnv(NeoRacerEnvConfig(reward=RewardConfig(lap_bonus=20.0)))
 obs, info = env.reset(seed=0)
 obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 ```
@@ -106,7 +108,7 @@ obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 | `max_episode_steps` | **int** | `1800` | Steps before truncation (see `Episode End`) |
 | `spawn` | **SpawnRange** | `lateral_m=0.15, yaw_rad=0.15, resettle_steps=50` | Random start offsets (see `Starting State`) |
 | `termination` | **TerminationConfig** | `upright_rollover_cos=0.5, stuck_window_s=4.0, stuck_progress_rad=0.05` | Rollover and stuck thresholds (see `Episode End`) |
-| `reward` | **RewardConfig** | `progress_weight=1.0, contact_penalty=0.1, rollover_penalty=10.0, stuck_penalty=5.0, lap_bonus=10.0` | Reward weights (see `Rewards`) |
+| `reward` | **RewardConfig** | `progress_weight=1.0, rollover_penalty=10.0, crash_penalty=5.0, stuck_penalty=5.0, lap_bonus=10.0` | Reward weights (see `Rewards`) |
 | `obs_bounds` | **ObservationBounds** | see the table in `Observation Space` | Bounds of the observation space |
 
 `render_mode="human"` is a separate argument of `NeoRacerEnv`. It opens the MuJoCo viewer.

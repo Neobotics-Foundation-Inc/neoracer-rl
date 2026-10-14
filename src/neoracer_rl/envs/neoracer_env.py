@@ -35,22 +35,23 @@ Control rate: 30 Hz, the target LiDAR scan rate of the real hardware.
 __init__ computes the physics steps per action from model.opt.timestep.
 
 Reward (RewardConfig, all weights explicit and UNTUNED, see reward):
-    r_t = progress_weight * delta_theta_t  -  contact_penalty * contact_t
+    r_t = progress_weight * delta_theta_t
     plus one-time terminal adjustments:
         + lap_bonus        on successful lap completion
         - rollover_penalty on rollover termination
+        - crash_penalty    on crash termination
         - stuck_penalty    on stuck termination
     delta_theta_t is the signed net change in cumulative angle (radians)
-    around the loop's center this tick (see Progress).
+    around the loop's center this tick (see Progress). crash_penalty equals
+    stuck_penalty, so an episode that makes progress and then crashes
+    returns more than one in which the car never moves.
 
 Termination (terminated=True) vs. truncation (truncated=True):
-    terminated: rollover (upright_cos below the threshold), stuck (no net
-    progress in a window of time), or a full lap (cumulative angle >= 2 pi
-    in the forward direction of the track, which is +). See termination.
+    terminated: rollover (upright_cos below the threshold), crash (a car
+    geom touched a wall), stuck (no net progress in a window of time), or a
+    full lap (cumulative angle >= 2 pi in the forward direction of the
+    track, which is +). See termination.
     truncated: the episode reached max_episode_steps.
-    A wall contact does not end the episode. The env records it in info and
-    the reward has a penalty for it. If the car is stuck against a wall, the
-    stuck check ends the episode.
 """
 
 import os
@@ -81,7 +82,7 @@ type Observation = npt.NDArray[np.float32]  # shape (OBS_DIM,), see module docst
 _ACTION_LOW = np.array([-1.0, -1.0], dtype=np.float32)
 _ACTION_HIGH = np.array([1.0, 1.0], dtype=np.float32)
 
-type TerminationReason = Literal["rollover", "stuck", "lap_complete"]
+type TerminationReason = Literal["rollover", "crash", "stuck", "lap_complete"]
 
 
 class EnvInfo(TypedDict, closed=True):
@@ -112,9 +113,12 @@ class RewardConfig:
     the formula."""
 
     progress_weight: float = 1.0  # reward per radian of signed progress around the loop
-    contact_penalty: float = 0.1  # penalty per tick any car geom touches a wall
     rollover_penalty: float = 10.0  # one-time penalty on rollover termination
-    stuck_penalty: float = 5.0  # one-time penalty on stuck termination
+    # One-time penalties on crash and stuck termination. Equal, so a car that
+    # tries the first corner and hits the wall returns more than a car that
+    # does not move.
+    crash_penalty: float = 5.0
+    stuck_penalty: float = 5.0
     lap_bonus: float = 10.0  # one-time bonus on successful lap completion
 
 
@@ -241,11 +245,17 @@ def is_stuck(p: Progress, window_len: int, min_progress: float) -> bool:
 
 
 def termination(
-    cfg: TerminationConfig, upright_cos: float, stuck: bool, total_progress: float
+    cfg: TerminationConfig,
+    upright_cos: float,
+    contact: bool,
+    stuck: bool,
+    total_progress: float,
 ) -> TerminationReason | None:
     """The reason the episode ends at this step, or None if it continues."""
     if upright_cos < cfg.upright_rollover_cos:
         return "rollover"
+    if contact:
+        return "crash"
     if stuck:
         return "stuck"
     if total_progress >= 2.0 * np.pi:
@@ -253,17 +263,15 @@ def termination(
     return None
 
 
-def reward(
-    cfg: RewardConfig, delta: float, contact: bool, reason: TerminationReason | None
-) -> float:
+def reward(cfg: RewardConfig, delta: float, reason: TerminationReason | None) -> float:
     r = cfg.progress_weight * delta
-    if contact:
-        r -= cfg.contact_penalty
     match reason:
         case None:
             pass
         case "rollover":
             r -= cfg.rollover_penalty
+        case "crash":
+            r -= cfg.crash_penalty
         case "stuck":
             r -= cfg.stuck_penalty
         case "lap_complete":
@@ -435,16 +443,18 @@ class NeoRacerEnv(gym.Env):
             self._progress, window_len, self.config.termination.stuck_progress_rad
         )
         reason = termination(
-            self.config.termination, upright_cos, stuck, self._progress.total
+            self.config.termination,
+            upright_cos,
+            contact_this_tick,
+            stuck,
+            self._progress.total,
         )
         terminated = reason is not None
         truncated = (
             not terminated
         ) and self._step_count >= self.config.max_episode_steps
 
-        step_reward = reward(
-            self.config.reward, self._progress.delta, contact_this_tick, reason
-        )
+        step_reward = reward(self.config.reward, self._progress.delta, reason)
         obs, speed = self._build_observation()
         info = self._build_info(speed, contact_this_tick, upright_cos, reason)
 

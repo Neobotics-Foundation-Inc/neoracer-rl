@@ -208,25 +208,26 @@ def test_throttle_scale_outside_0_1_is_rejected(scale):
 
 
 def test_wall_crash_observations_stay_in_space():
-    """A recorded wall crash pushes steer_cmd_pos to about 1.2 rad, past its
-    soft 0.45 rad joint limit. Every observation must still be inside
-    observation_space. The actions are episode 23 of a full-throttle random
-    run at the full motor limit (throttle_scale=1): default_rng(0), which is
-    PCG64(0), advanced past the 3480 steps (2 draws each) before it."""
+    """A recorded wall crash pushes steer_cmd_pos to about 0.83 rad, past its
+    soft 0.45 rad joint limit. Every observation up to the crash must still
+    be inside observation_space. The actions are full throttle at the full
+    motor limit (throttle_scale=1) and random steering from default_rng(13)."""
     env = NeoRacerEnv(NeoRacerEnvConfig(throttle_scale=1.0))
-    bits = np.random.PCG64(0)
-    bits.advance(2 * 3480)
-    rng = np.random.Generator(bits)
-    env.reset(seed=23)
-    peak = 0.0
-    for _ in range(46):
+    rng = np.random.default_rng(13)
+    env.reset(seed=13)
+    peak, reason = 0.0, None
+    for _ in range(env.config.max_episode_steps):
         action = rng.uniform(-1, 1, size=2).astype(np.float32)
         action[0] = 1.0
-        obs, _reward, _terminated, _truncated, _info = env.step(action)
+        obs, _reward, terminated, truncated, info = env.step(action)
         assert env.observation_space.contains(obs)
         peak = max(peak, abs(float(obs[STEER_CMD_POS])))
+        if terminated or truncated:
+            reason = info["termination_reason"]
+            break
     env.close()
-    assert peak > 1.0, "the recorded crash no longer happens; record a new one"
+    assert reason == "crash"
+    assert peak > 0.8, "the recorded crash no longer happens; record a new one"
 
 
 def test_repeated_random_actions_produce_no_nans(env):
@@ -294,46 +295,78 @@ def test_is_stuck_only_with_a_full_window_and_little_progress():
 
 
 def test_termination_reason_follows_the_priority():
-    """Rollover comes first, then stuck, then a lap. A lap is complete if
-    and only if the total progress is at least +2 pi. Progress in the
-    negative direction never completes a lap."""
+    """Rollover comes first, then a crash, then stuck, then a lap. A lap is
+    complete if and only if the total progress is at least +2 pi. Progress
+    in the negative direction never completes a lap."""
     cfg = TerminationConfig()
     rng = np.random.default_rng(3)
     totals = [*rng.uniform(-2.0 * LAP, 2.0 * LAP, 500), LAP, -LAP, 0.0]
     for total in totals:
         for upright_cos in (-1.0, cfg.upright_rollover_cos - 1e-9, 0.9, 1.0):
-            for stuck in (False, True):
-                reason = termination(cfg, upright_cos, stuck, total)
-                if upright_cos < cfg.upright_rollover_cos:
-                    assert reason == "rollover"
-                elif stuck:
-                    assert reason == "stuck"
-                elif total >= LAP:
-                    assert reason == "lap_complete"
-                else:
-                    assert reason is None
+            for contact in (False, True):
+                for stuck in (False, True):
+                    reason = termination(cfg, upright_cos, contact, stuck, total)
+                    if upright_cos < cfg.upright_rollover_cos:
+                        assert reason == "rollover"
+                    elif contact:
+                        assert reason == "crash"
+                    elif stuck:
+                        assert reason == "stuck"
+                    elif total >= LAP:
+                        assert reason == "lap_complete"
+                    else:
+                        assert reason is None
 
 
 def test_reward_adds_the_terminal_term():
-    """Without a termination, the reward is progress_weight * delta minus
-    contact_penalty for a contact. A termination adds lap_bonus or subtracts
-    its penalty."""
+    """Without a termination, the reward is progress_weight * delta. A
+    termination adds lap_bonus or subtracts its penalty."""
     cfg = RewardConfig()
     terminal: frozendict[TerminationReason, float] = frozendict(
         {
             "lap_complete": cfg.lap_bonus,
             "rollover": -cfg.rollover_penalty,
+            "crash": -cfg.crash_penalty,
             "stuck": -cfg.stuck_penalty,
         }
     )
     rng = np.random.default_rng(4)
     for delta in rng.uniform(-np.pi, np.pi, 200):
-        for contact in (False, True):
-            base = reward(cfg, delta, contact, None)
-            expected = cfg.progress_weight * delta - cfg.contact_penalty * contact
-            assert base == pytest.approx(expected)
-            for reason, term in terminal.items():
-                assert reward(cfg, delta, contact, reason) == pytest.approx(base + term)
+        base = reward(cfg, delta, None)
+        assert base == pytest.approx(cfg.progress_weight * delta)
+        for reason, term in terminal.items():
+            assert reward(cfg, delta, reason) == pytest.approx(base + term)
+
+
+def _episode_return(
+    throttle: float, seed: int
+) -> tuple[float, TerminationReason | None]:
+    """The return and the end of an episode with a constant action: the
+    throttle, and no steering."""
+    env = NeoRacerEnv()
+    env.reset(seed=seed)
+    total, reason = 0.0, None
+    for _ in range(env.config.max_episode_steps):
+        _obs, r, terminated, truncated, info = env.step(
+            np.array([throttle, 0.0], dtype=np.float32)
+        )
+        total += r
+        if terminated or truncated:
+            reason = info["termination_reason"]
+            break
+    env.close()
+    return total, reason
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_trying_the_first_corner_beats_not_moving(seed):
+    """A car that drives straight at the first corner and hits the wall
+    returns more than a car that does not move. Otherwise "do not move"
+    would be a local optimum that a learner has to escape."""
+    still, still_end = _episode_return(0.0, seed)
+    tried, tried_end = _episode_return(1.0, seed)
+    assert (still_end, tried_end) == ("stuck", "crash")
+    assert tried > still
 
 
 # --- termination and truncation in the env ------------------------------------

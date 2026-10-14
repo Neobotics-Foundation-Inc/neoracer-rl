@@ -18,7 +18,7 @@ Action space -- Box([-1,-1],[1,1]), float32:
     racecar_core uses + angle = right, so this env does not use
     racecar_core_adapter.MujocoDrive, which negates the steer. step() clamps
     the action and scales it by the actuator limits of the compiled model
-    (contract.actuator_limits).
+    (contract.actuator_limits), and the throttle also by throttle_scale.
 
 Observation space -- Box(20,), float32, built only from sensors.SensorReadings
 (no raw qpos/qvel):
@@ -163,11 +163,22 @@ class NeoRacerEnvConfig:
 
     car_path: str = assets.DEFAULT_CAR
     control_hz: float = 30.0  # Hz
+    # The fraction of the motor torque limit that action[0] = 1 gives, in
+    # (0, 1]. At the full limit the car passes 27 m/s, and loop_corridor needs
+    # a few m/s: a LiDAR centering controller laps at 0.1 of the limit
+    # (about 4 m/s) and hits the wall at 0.2 (about 5.7 m/s).
+    throttle_scale: float = 0.1
     max_episode_steps: int = 1800  # 60 s at 30 Hz
     obs_bounds: ObservationBounds = ObservationBounds()
     spawn: SpawnRange = SpawnRange()
     termination: TerminationConfig = TerminationConfig()
     reward: RewardConfig = RewardConfig()
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.throttle_scale <= 1.0:
+            raise ValueError(
+                f"throttle_scale must be in (0, 1], not {self.throttle_scale}"
+            )
 
 
 def _observation_space(b: ObservationBounds) -> spaces.Box:
@@ -305,6 +316,7 @@ class NeoRacerEnv(gym.Env):
         self.effective_control_dt = self._substeps_per_action * physics_dt
 
         self._limits = contract.actuator_limits(self.model, self._car)
+        self._max_torque = config.throttle_scale * self._limits.torque_nm  # N·m
 
         self.action_space = spaces.Box(
             low=_ACTION_LOW, high=_ACTION_HIGH, dtype=np.float32
@@ -401,7 +413,7 @@ class NeoRacerEnv(gym.Env):
             self._car,
             self.data,
             ControlCommand(
-                throttle=float(action[0]) * self._limits.torque_nm,
+                throttle=float(action[0]) * self._max_torque,
                 steer=float(action[1]) * self._limits.steer_rad,
             ),
         )

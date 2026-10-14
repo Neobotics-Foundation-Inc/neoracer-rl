@@ -188,12 +188,32 @@ def test_out_of_range_actions_are_clamped_not_rejected():
     env_b.close()
 
 
-def test_wall_crash_observations_stay_in_space(env):
+@pytest.mark.parametrize("scale", [0.1, 0.5, 1.0])
+def test_full_throttle_gives_throttle_scale_of_the_motor_limit(scale):
+    """action[0] = 1 writes throttle_scale times the motor torque limit to
+    every drive motor."""
+    env = NeoRacerEnv(NeoRacerEnvConfig(throttle_scale=scale))
+    env.reset(seed=0)
+    env.step(np.array([1.0, 0.0], dtype=np.float32))
+    limit = env.model.bind_scalar(env.scene.car.drive[0]).ctrlrange[1]  # N·m
+    for motor in env.scene.car.drive:
+        assert env.data.bind_scalar(motor).ctrl[0] == pytest.approx(scale * limit)
+    env.close()
+
+
+@pytest.mark.parametrize("scale", [0.0, -0.1, 1.5])
+def test_throttle_scale_outside_0_1_is_rejected(scale):
+    with pytest.raises(ValueError, match="throttle_scale"):
+        NeoRacerEnvConfig(throttle_scale=scale)
+
+
+def test_wall_crash_observations_stay_in_space():
     """A recorded wall crash pushes steer_cmd_pos to about 1.2 rad, past its
     soft 0.45 rad joint limit. Every observation must still be inside
     observation_space. The actions are episode 23 of a full-throttle random
-    run: default_rng(0), which is PCG64(0), advanced past the 3480 steps
-    (2 draws each) before it."""
+    run at the full motor limit (throttle_scale=1): default_rng(0), which is
+    PCG64(0), advanced past the 3480 steps (2 draws each) before it."""
+    env = NeoRacerEnv(NeoRacerEnvConfig(throttle_scale=1.0))
     bits = np.random.PCG64(0)
     bits.advance(2 * 3480)
     rng = np.random.Generator(bits)
@@ -205,6 +225,7 @@ def test_wall_crash_observations_stay_in_space(env):
         obs, _reward, _terminated, _truncated, _info = env.step(action)
         assert env.observation_space.contains(obs)
         peak = max(peak, abs(float(obs[STEER_CMD_POS])))
+    env.close()
     assert peak > 1.0, "the recorded crash no longer happens; record a new one"
 
 

@@ -15,7 +15,6 @@ from examples.train_ppo import (
     clipped_surrogate,
     collect_rollout,
     empty_obs_stats,
-    env_action,
     gae,
     init_actor_critic,
     init_opt_state,
@@ -118,7 +117,6 @@ def test_policy_loss_is_zero_when_all_advantages_are_zero():
     [
         ("gamma", 0.0),
         ("gae_lambda", 1.5),
-        ("max_throttle", 0.0),
         ("rollout_steps", 0),
         ("minibatches", 300),  # more than rollout_steps (256)
         ("clip_eps", 0.0),
@@ -132,18 +130,6 @@ def test_policy_loss_is_zero_when_all_advantages_are_zero():
 def test_ppo_params_reject_values_outside_their_domain(field, bad):
     with pytest.raises(ValueError, match=field):
         PPOParams(**{field: bad})
-
-
-@pytest.mark.parametrize("max_throttle", [0.1, 0.2, 1.0])
-def test_env_action_stays_in_the_scaled_box_and_keeps_in_range_steer(max_throttle):
-    rng = np.random.default_rng(0)
-    actions = rng.normal(scale=2.0, size=(200, 2))
-    out = np.stack([env_action(a, max_throttle) for a in actions])
-    assert np.all(np.abs(out[:, 0]) <= max_throttle)
-    assert np.all(np.abs(out[:, 1]) <= 1.0)
-    inside = np.all(np.abs(actions) <= 1.0, axis=1)
-    np.testing.assert_allclose(out[inside, 0], max_throttle * actions[inside, 0])
-    np.testing.assert_array_equal(out[inside, 1], actions[inside, 1])
 
 
 @pytest.mark.parametrize("seed", range(3))

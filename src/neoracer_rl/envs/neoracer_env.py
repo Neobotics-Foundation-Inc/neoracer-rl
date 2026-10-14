@@ -8,7 +8,11 @@ neoracer_mujoco.control drive the same simulator.
 
 Frame: +X forward, +Y left, +Z up (see neoracer-mujoco's assets/neoracer.xml).
 
-Track: assets/tracks/loop_corridor.xml only.
+Track (config.tracks): LoopCorridor, assets/tracks/loop_corridor.xml, or
+GeneratedTracks, a pool of tracks from neoracer_mujoco.track_generation. With
+a pool, reset() draws the track of each episode. Progress is the angle around
+the center of the loop on loop_corridor, and the distance along the
+centerline on a generated track, as an angle: 2 pi is one lap on both.
 
 Action space -- Box([-1,-1],[1,1]), float32:
     action[0] = normalized throttle, + = forward
@@ -80,6 +84,16 @@ from neoracer_mujoco import assets, batch, collision, contract, physics, sensors
 from neoracer_mujoco.control.steering import ControlCommand
 from neoracer_mujoco.physics import PhysicsRanges
 from neoracer_mujoco.scene import Car, Scene
+from neoracer_mujoco.track_generation import (
+    Difficulty,
+    NoValidTrack,
+    Track,
+    WallParams,
+    generate_track,
+    lap_distance,
+    settings_for_difficulty,
+    to_spec,
+)
 
 # The spawn offset, the progress around the world origin, the lap and the
 # reward are specific to the geometry of this one track.
@@ -89,6 +103,11 @@ _TRACK = os.path.join(assets.TRACK_DIR, "loop_corridor.xml")
 # inner wall at y=-2, so the 1.0 m wide bottom straight is centered at
 # y=-2.5. At the origin, the car would spawn inside the inner wall.
 _LOOP_SPAWN_OFFSET = (0.0, -2.5, 0.0)
+
+# The wall boxes of a generated track: more than the 161 that any of 240
+# tracks needed, so that every track of a pool has the same sizes, as a batch
+# with one track per row needs.
+WALL_BOXES = 192
 
 OBS_DIM = 20
 type Observation = npt.NDArray[np.float32]  # shape (OBS_DIM,), see module docstring
@@ -178,10 +197,33 @@ class ObservationBounds:
 
 
 @dataclass(frozen=True)
+class LoopCorridor:
+    """assets/tracks/loop_corridor.xml, a closed corridor about 1 m wide."""
+
+
+@dataclass(frozen=True)
+class GeneratedTracks:
+    """A pool of generated tracks: the first count seeds, from first_seed
+    on, that give a track of this difficulty."""
+
+    difficulty: Difficulty = 1  # 0 gentle and wide to 3 tight and narrow
+    count: int = 16
+    first_seed: int = 0
+
+    def __post_init__(self) -> None:
+        if self.count < 1:
+            raise ValueError(f"a pool needs at least one track, not {self.count}")
+
+
+type Tracks = LoopCorridor | GeneratedTracks
+
+
+@dataclass(frozen=True)
 class NeoRacerEnvConfig:
     """Environment configuration. The track is always loop_corridor.xml."""
 
     car_path: str = assets.DEFAULT_CAR
+    tracks: Tracks = LoopCorridor()
     control_hz: float = 30.0  # Hz
     # The fraction of the motor torque limit that action[0] = 1 gives, in
     # (0, 1]. At the full limit the car passes 27 m/s, and loop_corridor needs
@@ -201,6 +243,58 @@ class NeoRacerEnvConfig:
             raise ValueError(
                 f"throttle_scale must be in (0, 1], not {self.throttle_scale}"
             )
+
+
+@dataclass(frozen=True)
+class Arena:
+    """One track of the env, with the car on it, at the car's spawn."""
+
+    scene: Scene
+    layout: LoopCorridor | Track  # what lap_angle measures progress on
+
+
+def arenas(config: NeoRacerEnvConfig, visuals: bool) -> tuple[Arena, ...]:
+    """The tracks of config.tracks, with the car of config. Raise ValueError
+    if the seeds give too few generated tracks."""
+    match config.tracks:
+        case LoopCorridor() as loop:
+            return (Arena(loop_scene(config, visuals), loop),)
+        case GeneratedTracks(difficulty=difficulty, count=count, first_seed=first):
+            settings = settings_for_difficulty(difficulty)
+            walls = WallParams(boxes_per_wall=WALL_BOXES)
+            pool: list[Arena] = []
+            for seed in range(first, first + 4 * count):
+                match generate_track(seed, settings):
+                    case Track() as track:
+                        spec = to_spec(track, walls)
+                        scene = assets.compose(spec, config.car_path, visuals=visuals)
+                        pool.append(Arena(scene, track))
+                    case NoValidTrack():
+                        pass
+                    case other:
+                        assert_never(other)
+                if len(pool) == count:
+                    return tuple(pool)
+            raise ValueError(
+                f"seeds {first} to {first + 4 * count - 1} gave only {len(pool)} "
+                f"tracks of difficulty {difficulty}, not {count}"
+            )
+        case other:
+            assert_never(other)
+
+
+def lap_angle(arena: Arena, sensordata: SensorData) -> npt.NDArray[np.float64]:
+    """How far around the track the car in sensordata (..., nsensordata) is,
+    as an angle (rad), shape (...,). One lap is 2 pi."""
+    model, car = arena.scene.model, arena.scene.car
+    match arena.layout:
+        case LoopCorridor():
+            return angle_around_center(model, car, sensordata)
+        case Track() as track:
+            xy = batch.read(model, sensordata, car.truth.pos)[..., :2]
+            return 2.0 * np.pi * lap_distance(track, xy) / track.total_length
+        case other:
+            assert_never(other)
 
 
 def loop_scene(config: NeoRacerEnvConfig, visuals: bool) -> Scene:
@@ -409,10 +503,14 @@ class NeoRacerEnv(gym.Env):
             raise ValueError(f"Unsupported render_mode: {render_mode!r}")
         self.render_mode = render_mode
 
-        # scene.car holds the car's parts as spec elements, which the env
-        # binds to self.data where it reads or writes them. scene.model keeps
-        # the physics of the XML; self.model has the physics of the episode.
-        self.scene = loop_scene(config, visuals=render_mode is not None)
+        # scene is the track of the episode. scene.car holds the car's parts
+        # as spec elements, which the env binds to self.data where it reads or
+        # writes them. scene.model keeps the physics of the XML; self.model
+        # has the physics of the episode. All tracks have the same sizes, so
+        # one MjData fits every one.
+        self._arenas = arenas(config, visuals=render_mode is not None)
+        self._arena = self._arenas[0]
+        self.scene = self._arena.scene
         self.model = copy.deepcopy(self.scene.model)
         self.data = mujoco.MjData(self.model)
         self.physics = physics.Physics()
@@ -436,6 +534,7 @@ class NeoRacerEnv(gym.Env):
         self._window_len = stuck_window_len(config)
 
         self._viewer = None
+        self._viewer_model = self.model
 
         # Episode state. gymnasium requires reset() before step(), and
         # reset() sets these values again.
@@ -444,8 +543,8 @@ class NeoRacerEnv(gym.Env):
 
     # --- internal helpers -----------------------------------------------
 
-    def _angle_around_center(self) -> float:
-        return float(angle_around_center(self.model, self._car, self.data.sensordata))
+    def _lap_angle(self) -> float:
+        return float(lap_angle(self._arena, self.data.sensordata))
 
     def _build_observation(self) -> tuple[Observation, float]:
         """The observation, and the estimated speed (m/s) in it."""
@@ -474,6 +573,11 @@ class NeoRacerEnv(gym.Env):
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed, options=options)
 
+        if len(self._arenas) > 1:  # one track takes no random draw
+            self._arena = self._arenas[int(self.np_random.integers(len(self._arenas)))]
+        if self._arena.scene is not self.scene:
+            self.scene, self._car = self._arena.scene, self._arena.scene.car
+            self.model = copy.deepcopy(self.scene.model)
         nominal = self.scene.model
         mujoco.mj_resetData(nominal, self.data)
         sim.apply_ctrl_and_step(nominal, self.data, 0.0, sim.SETTLE_STEPS)
@@ -484,7 +588,7 @@ class NeoRacerEnv(gym.Env):
         physics.apply_physics(self.model, self.scene, self.physics)
 
         self._step_count = 0
-        self._progress = start_progress(self._angle_around_center())
+        self._progress = start_progress(self._lap_angle())
 
         obs, speed = self._build_observation()
         upright_cos = sim.car_upright_cos(self.data, self._car)
@@ -515,9 +619,7 @@ class NeoRacerEnv(gym.Env):
 
         self._step_count += 1
         window_len = self._window_len
-        self._progress = advance(
-            self._progress, self._angle_around_center(), window_len
-        )
+        self._progress = advance(self._progress, self._lap_angle(), window_len)
 
         upright_cos = sim.car_upright_cos(self.data, self._car)
         stuck = is_stuck(
@@ -544,8 +646,12 @@ class NeoRacerEnv(gym.Env):
     def render(self):
         if self.render_mode != "human":
             return
+        if self._viewer is not None and self._viewer_model is not self.model:
+            self._viewer.close()  # a new track: show its model
+            self._viewer = None
         if self._viewer is None:
             self._viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            self._viewer_model = self.model
         self._viewer.sync()
 
     def close(self):

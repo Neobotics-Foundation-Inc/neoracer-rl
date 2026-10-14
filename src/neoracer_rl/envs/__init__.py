@@ -5,6 +5,8 @@ Gymnasium environments for the NeoRacer car.
 """
 
 from .neoracer_env import (
+    GeneratedTracks,
+    LoopCorridor,
     NeoRacerEnv,
     NeoRacerEnvConfig,
     ObservationBounds,
@@ -21,6 +23,8 @@ from .neoracer_env import (
 )
 
 __all__ = [
+    "GeneratedTracks",
+    "LoopCorridor",
     "NeoRacerEnv",
     "NeoRacerEnvConfig",
     "ObservationBounds",

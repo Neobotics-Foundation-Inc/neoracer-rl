@@ -10,6 +10,7 @@ import pytest
 from neoracer_mujoco.physics import Physics, PhysicsRanges, Range
 
 from neoracer_rl.envs import (
+    GeneratedTracks,
     NeoRacerEnv,
     NeoRacerEnvConfig,
     TerminationReason,
@@ -97,14 +98,20 @@ RANDOM_PHYSICS = PhysicsRanges(
 
 
 @pytest.mark.parametrize(
-    "ranges", [PhysicsRanges(), RANDOM_PHYSICS], ids=["nominal", "random"]
+    "config",
+    [
+        NeoRacerEnvConfig(),
+        NeoRacerEnvConfig(physics=RANDOM_PHYSICS),
+        NeoRacerEnvConfig(tracks=GeneratedTracks(count=3), physics=RANDOM_PHYSICS),
+    ],
+    ids=["nominal", "random-physics", "generated-tracks"],
 )
-def test_a_cpu_row_steps_like_neoracer_env(ranges):
+def test_a_cpu_row_steps_like_neoracer_env(config):
     """Rows 0 and 1 of a batch reset with default_rng(7) start where
-    NeoRacerEnv starts after reset(seed=7) and after a second reset, with the
-    same physics. With the same actions, they give the same observations,
-    rewards and episode ends, bit for bit, until the first episode ends."""
-    config = NeoRacerEnvConfig(physics=ranges)
+    NeoRacerEnv starts after reset(seed=7) and after a second reset, on the
+    same track and with the same physics. With the same actions, they give
+    the same observations, rewards and episode ends, bit for bit, until the
+    first episode ends."""
     sim_batch = NeoRacerBatch(Cpu(nthread=2), nbatch=2, config=config)
     state = sim_batch.reset(np.random.default_rng(7))
     envs = [NeoRacerEnv(config), NeoRacerEnv(config)]
@@ -112,7 +119,7 @@ def test_a_cpu_row_steps_like_neoracer_env(ranges):
     envs[1].reset(seed=7)
     second = envs[1].reset()[0]
     np.testing.assert_array_equal(state.obs, np.stack([first, second]))
-    assert (envs[0].physics == Physics()) == (ranges == PhysicsRanges())
+    assert (envs[0].physics == Physics()) == (config.physics == PhysicsRanges())
     rng = np.random.default_rng(1)
     ended = False
     while not ended:
@@ -190,3 +197,12 @@ def test_the_warp_backend_follows_the_cpu_backend():
     np.testing.assert_allclose(
         observations[1][:, :8], observations[0][:, :8], atol=0.05
     )
+
+
+def test_warp_refuses_a_pool_of_tracks():
+    """MuJoCo Warp steps one track per batch."""
+    for module in ("jax", "mujoco.mjx", "mujoco_warp"):
+        pytest.importorskip(module)
+    config = NeoRacerEnvConfig(tracks=GeneratedTracks(count=2))
+    with pytest.raises(ValueError, match="one track per batch"):
+        NeoRacerBatch(Warp(), nbatch=2, config=config)

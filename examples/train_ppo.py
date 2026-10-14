@@ -48,7 +48,12 @@ import numpy.typing as npt
 import optax
 from neoracer_mujoco.physics import PhysicsRanges, Range
 
-from neoracer_rl.envs import NeoRacerEnv, NeoRacerEnvConfig
+from neoracer_rl.envs import (
+    GeneratedTracks,
+    LoopCorridor,
+    NeoRacerEnv,
+    NeoRacerEnvConfig,
+)
 from neoracer_rl.envs.neoracer_batch import (
     REASONS,
     Backend,
@@ -57,7 +62,12 @@ from neoracer_rl.envs.neoracer_batch import (
     NeoRacerBatch,
     Warp,
 )
-from neoracer_rl.envs.neoracer_env import OBS_DIM, EnvInfo, TerminationReason
+from neoracer_rl.envs.neoracer_env import (
+    OBS_DIM,
+    EnvInfo,
+    TerminationReason,
+    Tracks,
+)
 
 ACTION_DIM = 2  # (throttle, steer), see neoracer_env.py
 
@@ -666,6 +676,16 @@ def parse_backend(text: str) -> Literal["cpu", "warp"]:
             )
 
 
+def parse_tracks(text: str) -> Literal["loop", "generated"]:
+    match text:
+        case "loop" | "generated":
+            return text
+        case _:
+            raise argparse.ArgumentTypeError(
+                f"tracks must be loop or generated, not {text!r}"
+            )
+
+
 def parse_baseline(text: str) -> Baseline:
     match text:
         case "random" | "zero":
@@ -706,10 +726,33 @@ def main() -> None:
         action="store_true",
         help="train and evaluate with the car physics drawn from RANDOM_PHYSICS",
     )
+    parser.add_argument(
+        "--tracks",
+        type=parse_tracks,
+        default="loop",
+        help="loop (loop_corridor) or generated (a pool of generated tracks)",
+    )
+    parser.add_argument("--pool", type=int, default=16, help="generated tracks")
+    parser.add_argument("--difficulty", type=int, choices=range(4), default=1)
+    parser.add_argument(
+        "--first-track-seed",
+        type=int,
+        default=0,
+        help="the pool is the first --pool seeds from this one that give a track",
+    )
     args = parser.parse_args()
     params = PPOParams()
+    kind_of_tracks: Literal["loop", "generated"] = args.tracks
+    match kind_of_tracks:
+        case "loop":
+            tracks: Tracks = LoopCorridor()
+        case "generated":
+            tracks = GeneratedTracks(args.difficulty, args.pool, args.first_track_seed)
+        case _:
+            assert_never(kind_of_tracks)
     config = NeoRacerEnvConfig(
-        physics=RANDOM_PHYSICS if args.random_physics else PhysicsRanges()
+        tracks=tracks,
+        physics=RANDOM_PHYSICS if args.random_physics else PhysicsRanges(),
     )
     rng = np.random.default_rng(args.seed)  # actions of the random baseline
 
@@ -736,7 +779,7 @@ def main() -> None:
     print(
         f"[train_ppo] total_steps={args.total_steps} seed={args.seed} "
         f"num_envs={args.num_envs} backend={args.backend} "
-        f"random_physics={args.random_physics}"
+        f"random_physics={args.random_physics} tracks={tracks}"
     )
     kind: Literal["cpu", "warp"] = args.backend
     match kind:

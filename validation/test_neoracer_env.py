@@ -325,10 +325,15 @@ def test_rollover_terminates(env):
     # A 90 degree rotation about the body X axis turns the car +Z axis to
     # world -Y. So upright_cos becomes 0, below upright_rollover_cos.
     half = np.pi / 4.0  # rad, half of the rotation angle
-    env.data.qpos[env.scene.car.qpos][3:7] = [np.cos(half), np.sin(half), 0.0, 0.0]
+    env.data.bind_scalar(env.scene.car.joint).qpos[3:7] = [
+        np.cos(half),
+        np.sin(half),
+        0.0,
+        0.0,
+    ]
     mujoco.mj_forward(env.model, env.data)
     assert (
-        sim.car_upright_cos(env.data, env.scene.car.body)
+        sim.car_upright_cos(env.data, env.scene.car)
         < env.config.termination.upright_rollover_cos
     )
 

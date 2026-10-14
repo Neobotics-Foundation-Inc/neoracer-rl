@@ -287,7 +287,8 @@ class NeoRacerEnv(gym.Env):
         self.render_mode = render_mode
 
         # compose raises ValueError if the car has no free joint or misses an
-        # actuator or sensor. scene.car holds the car's indices in the arrays.
+        # actuator or sensor. scene.car holds the car's parts as spec elements,
+        # which the env binds to self.data where it reads or writes them.
         self.scene = assets.compose(
             mujoco.MjSpec.from_file(_TRACK), config.car_path, _LOOP_SPAWN_OFFSET
         )
@@ -326,12 +327,12 @@ class NeoRacerEnv(gym.Env):
 
     def _angle_around_center(self) -> float:
         """Angle (rad) of the car's position around the world origin."""
-        xpos = self.data.xpos[self._car.body]
+        xpos = self.data.bind_scalar(self._car.body).xpos
         return float(np.arctan2(xpos[1], xpos[0]))
 
     def _build_observation(self) -> tuple[Observation, float]:
         """The observation, and the estimated speed (m/s) in it."""
-        readings = sensors.read(self._car.sensors, self.data.sensordata)
+        readings = sensors.read(self._car.sensors, self.data)
         lidar = sensors.lidar_ranges(readings).astype(np.float32)
         accel = readings.imu_accel.astype(np.float32)
         gyro = readings.imu_gyro.astype(np.float32)
@@ -376,7 +377,7 @@ class NeoRacerEnv(gym.Env):
             )
         )
         # The car's free joint in qpos, a view: (x, y, z, qw, qx, qy, qz).
-        qpos = self.data.qpos[self._car.qpos]
+        qpos = self.data.bind_scalar(self._car.joint).qpos
         qpos[1] += lateral
         qpos[3:7] = _compose_yaw_perturbation(qpos[3:7], yaw)
         mujoco.mj_forward(self.model, self.data)
@@ -387,7 +388,7 @@ class NeoRacerEnv(gym.Env):
         self._progress = start_progress(self._angle_around_center())
 
         obs, speed = self._build_observation()
-        upright_cos = sim.car_upright_cos(self.data, self._car.body)
+        upright_cos = sim.car_upright_cos(self.data, self._car)
         info = self._build_info(
             speed, contact=False, upright_cos=upright_cos, reason=None
         )
@@ -410,7 +411,7 @@ class NeoRacerEnv(gym.Env):
         for _ in range(self._substeps_per_action):
             mujoco.mj_step(self.model, self.data)
             if collision.car_touches_wall(
-                self.model, self.data, self._car.body, self._walls
+                self.model, self.data, self._car, self._walls
             ):
                 contact_this_tick = True
 
@@ -420,7 +421,7 @@ class NeoRacerEnv(gym.Env):
             self._progress, self._angle_around_center(), window_len
         )
 
-        upright_cos = sim.car_upright_cos(self.data, self._car.body)
+        upright_cos = sim.car_upright_cos(self.data, self._car)
         stuck = is_stuck(
             self._progress, window_len, self.config.termination.stuck_progress_rad
         )

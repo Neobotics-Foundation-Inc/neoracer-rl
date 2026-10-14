@@ -141,6 +141,10 @@ validation/             pytest tests
 users/<name>/           personal experiments, not checked by ruff, ty, the tests or CI
 ```
 
+## Citing
+
+If you use this environment in your work, cite it with the "Cite this repository" button on GitHub, which reads `CITATION.cff`, and cite the simulator, neoracer-mujoco, the same way. The authors in `CITATION.cff` are the people in the git history, most commits first. `.github/citation.py` writes it, so do not edit it by hand.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Coding agents follow [AGENTS.md](AGENTS.md).

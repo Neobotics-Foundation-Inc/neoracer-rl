@@ -1,7 +1,9 @@
 """
 Laws for the PPO baseline (examples/train_ppo.py): GAE, the clipped loss,
-the observation statistics, and a short training run on NeoRacerEnv.
+the observation statistics, and a short training run on NeoRacerBatch.
 """
+
+from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
@@ -9,7 +11,10 @@ import numpy as np
 import pytest
 
 from examples.train_ppo import (
+    ACTION_DIM,
     Batch,
+    Dense,
+    ObsStats,
     PPOParams,
     RolloutState,
     clipped_surrogate,
@@ -24,7 +29,8 @@ from examples.train_ppo import (
     save_policy,
     update_obs_stats,
 )
-from neoracer_rl.envs import NeoRacerEnv
+from neoracer_rl.envs import NeoRacerEnvConfig, RewardConfig
+from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
 from neoracer_rl.envs.neoracer_env import OBS_DIM
 
 
@@ -154,18 +160,19 @@ def test_running_obs_stats_match_numpy_over_all_batches(seed):
 
 def test_short_training_run_changes_the_params_and_keeps_them_finite(tmp_path):
     params = PPOParams(rollout_steps=128, epochs=2, minibatches=2, hidden=(16,))
-    envs = [NeoRacerEnv() for _ in range(2)]
-    obs = np.stack([env.reset(seed=i)[0] for i, env in enumerate(envs)]).astype(
-        np.float64
-    )
+    env = NeoRacerBatch(Cpu(nthread=0), nbatch=2)
     state = RolloutState(
-        obs, np.zeros(2), np.zeros(2, dtype=np.int64), empty_obs_stats()
+        env.reset(np.random.default_rng(0)),
+        np.zeros(2),
+        np.zeros(2, dtype=np.int64),
+        empty_obs_stats(),
     )
     net = init_actor_critic(jax.random.key(1), params)
     opt_state = init_opt_state(net, params)
     start = net
     # One update from 128 * 2 = 256 env steps.
-    batch, state, _ = collect_rollout(envs, state, net, jax.random.key(10), params)
+    batch, state, _ = collect_rollout(env, state, net, jax.random.key(10), params)
+    env.close()
     net, opt_state, info = ppo_update(net, opt_state, batch, jax.random.key(20), params)
     assert all(np.isfinite(float(x)) for x in jax.tree.leaves(info))
     leaves, start_leaves = jax.tree.leaves(net), jax.tree.leaves(start)
@@ -181,3 +188,38 @@ def test_short_training_run_changes_the_params_and_keeps_them_finite(tmp_path):
     for a, b in zip(jax.tree.leaves(loaded), leaves, strict=True):
         np.testing.assert_array_equal(a, b)
     np.testing.assert_array_equal(stats.mean, state.stats.mean)
+
+
+def test_truncation_bootstraps_from_the_last_observation_of_the_episode():
+    """The env gives no reward here, and the critic returns the speed in the
+    observation. An episode truncated after step t then gets the target
+    gamma * (speed after step t): the value of the last observation of the
+    episode, not of the first one of the next, and GAE stops there."""
+    nsteps, episode, speed = 6, 3, OBS_DIM - 1  # speed: observation index
+    params = PPOParams(rollout_steps=nsteps, minibatches=1, hidden=(), obs_clip=1e9)
+    reward_free = RewardConfig(progress_weight=0.0)
+    config = NeoRacerEnvConfig(max_episode_steps=episode, reward=reward_free)
+    env = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
+    pick = np.zeros((OBS_DIM, 1))
+    pick[speed] = 1.0
+    net = init_actor_critic(jax.random.key(0), params)
+    net = replace(net, critic=(Dense(jnp.asarray(pick), jnp.zeros(1)),))
+    # With this many observations seen, normalize_obs is the identity.
+    stats = ObsStats(np.zeros(OBS_DIM), np.ones(OBS_DIM), 1e15)
+    start = env.reset(np.random.default_rng(0))
+    state = RolloutState(start, np.zeros(2), np.zeros(2, dtype=np.int64), stats)
+    batch, _, finished = collect_rollout(env, state, net, jax.random.key(1), params)
+    assert [e.outcome for e in finished] == ["truncated"] * 4
+
+    # Replay the actions to see the observation after each step.
+    actions = np.asarray(batch.action).reshape(nsteps, 2, ACTION_DIM)
+    target = np.asarray(batch.target).reshape(nsteps, 2)
+    replay = env.reset(np.random.default_rng(0))
+    for t in range(nsteps):
+        replay, out = env.step(replay, actions[t])
+        if (t + 1) % episode == 0:
+            assert out.truncated.all()
+            last = out.obs[:, speed]  # m/s
+            assert np.all(np.abs(last - replay.obs[:, speed]) > 1e-3)
+            np.testing.assert_allclose(target[t], params.gamma * last, rtol=1e-4)
+    env.close()

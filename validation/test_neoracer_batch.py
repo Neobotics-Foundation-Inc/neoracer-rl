@@ -135,6 +135,28 @@ def test_a_row_whose_episode_ends_starts_over_from_its_spawn():
     np.testing.assert_array_equal(state.obs[1], out.obs[1])
 
 
+def test_respawn_changes_only_where_rows_start_over():
+    """respawn draws new spawns and leaves the running episodes alone. A row
+    whose episode ends after it starts over from its new spawn."""
+    config = NeoRacerEnvConfig(throttle_scale=1.0)
+    sim_batch = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
+    rng = np.random.default_rng(0)
+    action = np.array([[1.0, 0.0], [0.0, 0.0]], dtype=np.float32)
+    before, _ = sim_batch.step(sim_batch.reset(rng), action)
+    state = sim_batch.respawn(before, rng)
+    np.testing.assert_array_equal(state.sim, before.sim)
+    np.testing.assert_array_equal(state.obs, before.obs)
+    assert state.progress is before.progress
+    assert not np.array_equal(state.spawn_obs, before.spawn_obs)
+    state, out = sim_batch.step(state, action)
+    while not out.done[0]:
+        state, out = sim_batch.step(state, action)
+    sim_batch.close()
+    assert not out.done[1]
+    np.testing.assert_array_equal(state.obs[0], state.spawn_obs[0])
+    assert state.progress.angle[0] == state.spawn_angle[0]
+
+
 def test_the_warp_backend_follows_the_cpu_backend():
     """On MuJoCo Warp, a short drive from the same spawns stays within 5 cm
     of the CPU backend in every LiDAR range. Warp has its own collision and

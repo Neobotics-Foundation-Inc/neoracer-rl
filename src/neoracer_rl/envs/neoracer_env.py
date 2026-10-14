@@ -295,7 +295,6 @@ class NeoRacerEnv(gym.Env):
         self.model = self.scene.model
         self.data = mujoco.MjData(self.model)
         self._car = self.scene.car
-        self._walls = collision.wall_geom_ids(self.scene.spec, self.model)
 
         physics_dt = float(self.model.opt.timestep)
         self._substeps_per_action = max(
@@ -410,9 +409,7 @@ class NeoRacerEnv(gym.Env):
         contact_this_tick = False
         for _ in range(self._substeps_per_action):
             mujoco.mj_step(self.model, self.data)
-            if collision.car_touches_wall(
-                self.model, self.data, self._car, self._walls
-            ):
+            if collision.car_touches_wall(self.data, self._car):
                 contact_this_tick = True
 
         self._step_count += 1

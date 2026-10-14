@@ -235,7 +235,7 @@ class NeoRacerBatch:
             rows.append(physics.sample(self.config.physics, rng))
         sensordata = np.stack([d.sensordata for d in datas])
         return (
-            self._sim.initial(datas, rows),
+            self._sim.initial(datas, [self.scene] * self.nbatch, rows),
             observation(model, car, sensordata),
             angle_around_center(model, car, sensordata),
         )

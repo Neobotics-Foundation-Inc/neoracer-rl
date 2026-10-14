@@ -46,8 +46,9 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 import optax
+from neoracer_mujoco.physics import PhysicsRanges, Range
 
-from neoracer_rl.envs import NeoRacerEnv
+from neoracer_rl.envs import NeoRacerEnv, NeoRacerEnvConfig
 from neoracer_rl.envs.neoracer_batch import (
     REASONS,
     Backend,
@@ -59,6 +60,15 @@ from neoracer_rl.envs.neoracer_batch import (
 from neoracer_rl.envs.neoracer_env import OBS_DIM, EnvInfo, TerminationReason
 
 ACTION_DIM = 2  # (throttle, steer), see neoracer_env.py
+
+# The physics ranges of --random-physics: an example to start from, wide
+# enough to see an effect, not measured on the real car.
+RANDOM_PHYSICS = PhysicsRanges(
+    wheel_friction=Range(0.3, 1.2),
+    chassis_mass=Range(0.7, 1.5),
+    motor_torque=Range(0.5, 1.5),
+    steer_stiffness=Range(0.5, 2.0),
+)
 
 type ObsBatch = npt.NDArray[np.float64]  # shape (batch, OBS_DIM)
 
@@ -482,15 +492,21 @@ def format_log(log: UpdateLog, steps_per_s: float) -> str:
 
 
 def train(
-    params: PPOParams, total_steps: int, seed: int, num_envs: int, backend: Backend
+    params: PPOParams,
+    total_steps: int,
+    seed: int,
+    num_envs: int,
+    backend: Backend,
+    config: NeoRacerEnvConfig,
 ) -> tuple[ActorCritic, ObsStats]:
     """Train for at least total_steps env steps. Print one log line per update.
-    The spawns come from default_rng(seed); each update draws new ones."""
+    The spawns and the physics come from default_rng(seed); each update draws
+    new ones."""
     key = jax.random.key(seed)
     key, init_key = jax.random.split(key)
     net = init_actor_critic(init_key, params)
     opt_state = init_opt_state(net, params)
-    env = NeoRacerBatch(backend, num_envs)
+    env = NeoRacerBatch(backend, num_envs, config)
     spawn_rng = np.random.default_rng(seed)
     state = RolloutState(
         env=env.reset(spawn_rng),
@@ -581,12 +597,16 @@ type Baseline = Literal["random", "zero"]
 
 
 def evaluate(
-    policy: EvalPolicy, episodes: int, first_seed: int, rng: np.random.Generator
+    policy: EvalPolicy,
+    episodes: int,
+    first_seed: int,
+    rng: np.random.Generator,
+    config: NeoRacerEnvConfig,
 ) -> list[EpisodeResult]:
-    """Run episodes with env seeds first_seed, first_seed + 1, ...
-    A trained policy acts with its mean action (deterministic).
-    RandomActions draws uniform actions from rng."""
-    env = NeoRacerEnv()
+    """Run episodes of NeoRacerEnv(config) with env seeds first_seed,
+    first_seed + 1, ... A trained policy acts with its mean action
+    (deterministic). RandomActions draws uniform actions from rng."""
+    env = NeoRacerEnv(config)
     results = []
     for k in range(episodes):
         obs, _ = env.reset(seed=first_seed + k)
@@ -681,14 +701,22 @@ def main() -> None:
         default=10_000,
         help="env seed of the first evaluation episode",
     )
+    parser.add_argument(
+        "--random-physics",
+        action="store_true",
+        help="train and evaluate with the car physics drawn from RANDOM_PHYSICS",
+    )
     args = parser.parse_args()
     params = PPOParams()
+    config = NeoRacerEnvConfig(
+        physics=RANDOM_PHYSICS if args.random_physics else PhysicsRanges()
+    )
     rng = np.random.default_rng(args.seed)  # actions of the random baseline
 
     if args.eval is not None:
         net, stats = load_policy(args.eval)
         policy: EvalPolicy = Trained(net, stats, params)
-        results = evaluate(policy, args.episodes, args.eval_seed, rng)
+        results = evaluate(policy, args.episodes, args.eval_seed, rng, config)
         print_eval(f"policy {args.eval}", results, args.eval_seed)
         return
     if args.eval_baseline is not None:
@@ -700,14 +728,15 @@ def main() -> None:
                 policy = ZeroAction()
             case _:
                 assert_never(baseline)
-        results = evaluate(policy, args.episodes, args.eval_seed, rng)
+        results = evaluate(policy, args.episodes, args.eval_seed, rng, config)
         print_eval(baseline, results, args.eval_seed)
         return
 
     print(f"[train_ppo] {params}")
     print(
         f"[train_ppo] total_steps={args.total_steps} seed={args.seed} "
-        f"num_envs={args.num_envs} backend={args.backend}"
+        f"num_envs={args.num_envs} backend={args.backend} "
+        f"random_physics={args.random_physics}"
     )
     kind: Literal["cpu", "warp"] = args.backend
     match kind:
@@ -717,7 +746,9 @@ def main() -> None:
             backend = Warp()
         case _:
             assert_never(kind)
-    net, stats = train(params, args.total_steps, args.seed, args.num_envs, backend)
+    net, stats = train(
+        params, args.total_steps, args.seed, args.num_envs, backend, config
+    )
     if args.out is not None:
         save_policy(args.out, net, stats)
         print(f"[train_ppo] saved the policy to {args.out}")

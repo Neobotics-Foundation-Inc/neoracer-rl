@@ -18,6 +18,7 @@ import pytest
 from gymnasium import spaces
 from gymnasium.utils.env_checker import check_env
 from neoracer_mujoco import assets, sim
+from neoracer_mujoco.physics import PhysicsRanges, Range
 
 from neoracer_rl.envs import (
     NeoRacerEnv,
@@ -460,3 +461,24 @@ def test_model_state_does_not_leak_between_episodes(env):
     env.reset(seed=1)
     np.testing.assert_array_equal(env.model.body_pos, body_pos_before)
     np.testing.assert_array_equal(env.model.geom_size, geom_size_before)
+
+
+def test_reset_draws_the_physics_of_the_episode():
+    """Each reset draws a Physics from config.physics and steps with it: the
+    wheel friction of the model is the XML's times the drawn factor, the
+    same seed draws the same physics, and the nominal model stays as it was."""
+    ranges = PhysicsRanges(wheel_friction=Range(0.3, 0.9))
+    env = NeoRacerEnv(NeoRacerEnvConfig(physics=ranges))
+    wheel = env.scene.car.wheels[0]
+    nominal = float(env.scene.model.bind_scalar(wheel).friction[0])
+    drawn = []
+    for seed in (0, 1, 0):
+        env.reset(seed=seed)
+        factor = env.physics.wheel_friction
+        assert 0.3 <= factor <= 0.9
+        friction = env.model.bind_scalar(wheel).friction[0]
+        assert friction == pytest.approx(nominal * factor)
+        drawn.append(env.physics)
+    assert drawn[0] == drawn[2] != drawn[1]
+    assert env.scene.model.bind_scalar(wheel).friction[0] == nominal
+    env.close()

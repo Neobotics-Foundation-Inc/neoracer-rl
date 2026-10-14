@@ -49,6 +49,14 @@ Reward (RewardConfig, all weights explicit and UNTUNED, see reward):
     stuck_penalty, so an episode that makes progress and then crashes
     returns more than one in which the car never moves.
 
+Physics randomization (config.physics, neoracer_mujoco.physics):
+    reset() draws a Physics from config.physics, after the spawn offset, and
+    the episode steps with it: factors on the wheel friction, the chassis
+    mass, the motor torque and the steering stiffness. The default ranges
+    change nothing and take no random draw. The car settles at its spawn
+    with the physics of the XML, so with another mass its suspension settles
+    again in the first steps of the episode.
+
 Termination (terminated=True) vs. truncation (truncated=True):
     terminated: rollover (upright_cos below the threshold), crash (a car
     geom touched a wall), stuck (no net progress in a window of time), or a
@@ -57,6 +65,7 @@ Termination (terminated=True) vs. truncation (truncated=True):
     truncated: the episode reached max_episode_steps.
 """
 
+import copy
 import os
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict, assert_never
@@ -67,8 +76,9 @@ import mujoco.viewer
 import numpy as np
 import numpy.typing as npt
 from gymnasium import spaces
-from neoracer_mujoco import assets, batch, collision, contract, sensors, sim
+from neoracer_mujoco import assets, batch, collision, contract, physics, sensors, sim
 from neoracer_mujoco.control.steering import ControlCommand
+from neoracer_mujoco.physics import PhysicsRanges
 from neoracer_mujoco.scene import Car, Scene
 
 # The spawn offset, the progress around the world origin, the lap and the
@@ -183,6 +193,8 @@ class NeoRacerEnvConfig:
     spawn: SpawnRange = SpawnRange()
     termination: TerminationConfig = TerminationConfig()
     reward: RewardConfig = RewardConfig()
+    # The range of each factor of the car's physics, drawn at each reset.
+    physics: PhysicsRanges = PhysicsRanges()
 
     def __post_init__(self) -> None:
         if not 0.0 < self.throttle_scale <= 1.0:
@@ -191,12 +203,17 @@ class NeoRacerEnvConfig:
             )
 
 
-def loop_scene(config: NeoRacerEnvConfig) -> Scene:
-    """The car of config on loop_corridor.xml, at the spawn position."""
+def loop_scene(config: NeoRacerEnvConfig, visuals: bool) -> Scene:
+    """The car of config on loop_corridor.xml, at the spawn position. Without
+    visuals, the car's meshes are left out: the physics and the sensors are
+    the same, and the model is smaller and faster (assets.compose)."""
     # compose raises ValueError if the car has no free joint or misses an
     # actuator or sensor.
     return assets.compose(
-        mujoco.MjSpec.from_file(_TRACK), config.car_path, _LOOP_SPAWN_OFFSET
+        mujoco.MjSpec.from_file(_TRACK),
+        config.car_path,
+        _LOOP_SPAWN_OFFSET,
+        visuals=visuals,
     )
 
 
@@ -393,10 +410,12 @@ class NeoRacerEnv(gym.Env):
         self.render_mode = render_mode
 
         # scene.car holds the car's parts as spec elements, which the env
-        # binds to self.data where it reads or writes them.
-        self.scene = loop_scene(config)
-        self.model = self.scene.model
+        # binds to self.data where it reads or writes them. scene.model keeps
+        # the physics of the XML; self.model has the physics of the episode.
+        self.scene = loop_scene(config, visuals=render_mode is not None)
+        self.model = copy.deepcopy(self.scene.model)
         self.data = mujoco.MjData(self.model)
+        self.physics = physics.Physics()
         self._car = self.scene.car
 
         self._substeps_per_action = substeps_per_action(config, self.model)
@@ -455,12 +474,14 @@ class NeoRacerEnv(gym.Env):
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed, options=options)
 
-        mujoco.mj_resetData(self.model, self.data)
-        sim.apply_ctrl_and_step(self.model, self.data, 0.0, sim.SETTLE_STEPS)
-
+        nominal = self.scene.model
+        mujoco.mj_resetData(nominal, self.data)
+        sim.apply_ctrl_and_step(nominal, self.data, 0.0, sim.SETTLE_STEPS)
         apply_spawn_offset(
-            self.model, self.data, self._car, self.config.spawn, self.np_random
+            nominal, self.data, self._car, self.config.spawn, self.np_random
         )
+        self.physics = physics.sample(self.config.physics, self.np_random)
+        physics.apply_physics(self.model, self.scene, self.physics)
 
         self._step_count = 0
         self._progress = start_progress(self._angle_around_center())

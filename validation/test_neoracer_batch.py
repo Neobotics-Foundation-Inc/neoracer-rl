@@ -7,6 +7,7 @@ NeoRacerEnv, bit for bit.
 
 import numpy as np
 import pytest
+from neoracer_mujoco.physics import Physics, PhysicsRanges, Range
 
 from neoracer_rl.envs import (
     NeoRacerEnv,
@@ -87,18 +88,31 @@ def test_rewards_follow_reward():
         assert r == reward(cfg.reward, d, _reason(c))
 
 
-def test_a_cpu_row_steps_like_neoracer_env():
+RANDOM_PHYSICS = PhysicsRanges(
+    wheel_friction=Range(0.4, 1.2),
+    chassis_mass=Range(0.7, 1.5),
+    motor_torque=Range(0.6, 1.4),
+    steer_stiffness=Range(0.5, 1.5),
+)
+
+
+@pytest.mark.parametrize(
+    "ranges", [PhysicsRanges(), RANDOM_PHYSICS], ids=["nominal", "random"]
+)
+def test_a_cpu_row_steps_like_neoracer_env(ranges):
     """Rows 0 and 1 of a batch reset with default_rng(7) start where
-    NeoRacerEnv starts after reset(seed=7) and after a second reset. With the
-    same actions, they give the same observations, rewards and episode ends,
-    bit for bit, until the first episode ends."""
-    sim_batch = NeoRacerBatch(Cpu(nthread=2), nbatch=2)
+    NeoRacerEnv starts after reset(seed=7) and after a second reset, with the
+    same physics. With the same actions, they give the same observations,
+    rewards and episode ends, bit for bit, until the first episode ends."""
+    config = NeoRacerEnvConfig(physics=ranges)
+    sim_batch = NeoRacerBatch(Cpu(nthread=2), nbatch=2, config=config)
     state = sim_batch.reset(np.random.default_rng(7))
-    envs = [NeoRacerEnv(), NeoRacerEnv()]
+    envs = [NeoRacerEnv(config), NeoRacerEnv(config)]
     first = envs[0].reset(seed=7)[0]
     envs[1].reset(seed=7)
     second = envs[1].reset()[0]
     np.testing.assert_array_equal(state.obs, np.stack([first, second]))
+    assert (envs[0].physics == Physics()) == (ranges == PhysicsRanges())
     rng = np.random.default_rng(1)
     ended = False
     while not ended:

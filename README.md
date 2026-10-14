@@ -159,22 +159,32 @@ The arrays that go in and out are numpy arrays on both backends. Warp computes c
 `examples/train_ppo.py` trains a policy with PPO (proximal policy optimization), a common policy-gradient method. It runs 8 environments in a `NeoRacerBatch` on the CPU and prints one line per update, with how many episodes ended in a lap, a crash, got stuck or rolled over. On a GPU, add `--backend warp` and raise `--num-envs`. The evaluation runs `NeoRacerEnv`.
 
 ```sh
-python -m examples.train_ppo --total-steps 300000 --seed 0 --out ppo.npz
+python -m examples.train_ppo --total-steps 400000 --seed 1 --out ppo.npz
 python -m examples.train_ppo --eval ppo.npz --episodes 20
 python -m examples.train_ppo --eval-baseline random --episodes 20
 ```
 
-On a 4-core CPU the script runs about 500 environment steps per second. With seed 0 the first lap shows up after 70k to 90k steps, and after about 200k steps almost every episode is a lap. On 20 evaluation episodes:
+The thread count does not change the result: a seed gives the same run on 1 or 4 threads.
+
+### Baseline
+
+We trained seeds 0 to 4 for 400k steps each, on a 4-core 2.8 GHz Xeon, where a run takes about 9 minutes at about 740 steps per second. Then we evaluated each policy with its mean action on 20 episodes, env seeds 10000 to 10019. The middle columns give the share of the training episodes that ended in a lap, in each block of 50k steps.
 
 ```
-policy                 return   outcome
-ppo seed 0, 1M steps   +16.32   20/20 laps
-ppo seed 0, 400k       +16.31   20/20 laps
-random actions          -5.09   20/20 stuck
-zero action             -5.00   20/20 stuck
+                 laps in training, by 50k steps of training     evaluation, 20 episodes
+seed  first lap   50k 100k 150k 200k 250k 300k 350k 400k     return   outcome
+0     -            0%   0%   0%   0%   0%   0%   0%   0%      -5.86   20 crash
+1     96k          0%   1%  90%  99%  98%  99%  99%  99%     +16.31   20 lap
+2     82k          0%  19%  93%  99%  96%  99%  99% 100%     +16.31   20 lap
+3     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.83   20 crash
+4     133k         0%   0%   7%  83% 100%  99%  99%  96%     +16.31   20 lap
+random actions                                                -5.00   18 stuck, 2 crash
+zero action                                                   -5.00   20 stuck
 ```
 
-A lap without wall contact returns about 16.3, so the trained policy rarely touches a wall. Two settings matter. The initial action noise has to be large (standard deviation 1.0), or the policy learns to stop before the first corner.
+Three of the five seeds learn to lap. Once a seed finds the lap, almost every episode is one: about 243 steps (8.3 s) without touching a wall, for a return of about 16.3. The other two seeds fail in different ways. Seed 0 learns to back away from the first corner and creep until it hits the wall. Seed 3 learns to drive forward, but too slowly: its training episodes run out of time at about 0.84 laps, and its mean action hits the wall a fifth of the way around. So compare changes over several seeds, not one.
+
+The initial action noise is large (standard deviation 1.0) on purpose; the comment on `init_log_std` in `PPOParams` says why.
 
 ## Layout
 

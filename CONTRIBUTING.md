@@ -19,8 +19,8 @@ Coding agents read AGENTS.md instead.
 - The simulator itself (the car model, the tracks, the sensors) lives in [neoracer-mujoco](https://github.com/Neobotics-Foundation-Inc/neoracer-mujoco).
   If your change needs something new there, open a pull request in that repo first.
 - Keep one change in one pull request.
-- If this is your first commit, add yourself to the citation: run `python3 .github/citation.py > CITATION.cff`.
-  If you have committed under more than one name or email, add a line to `.mailmap` first, so you appear once.
+- `CITATION.cff` lists the five people with the most commits. If your commits change who they are, run `python3 .github/citation.py > CITATION.cff`.
+  If you have committed under more than one name or email, add a line to `.mailmap` first, so your commits count as one person's.
 
 ## You are responsible for your change
 

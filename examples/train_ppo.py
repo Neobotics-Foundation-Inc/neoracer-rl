@@ -7,9 +7,8 @@ gradient steps on a loss that limits how far the new policy moves from the old o
 This script is a small baseline, not a tuned agent.
 
 The policy is a Gaussian distribution over (throttle, steer). An MLP gives the mean,
-and a learned vector gives the log standard deviation. env_action() clips each
-sampled action to [-1, 1] and scales the throttle by PPOParams.max_throttle
-before env.step(). The log probability uses the unclipped sample.
+and a learned vector gives the log standard deviation. env.step() clips each
+sampled action to [-1, 1]; the log probability uses the unclipped sample.
 A second MLP (the critic) estimates the value of an observation.
 
 The script normalizes each observation with a running mean and variance,
@@ -68,18 +67,10 @@ class PPOParams:
     # With 0.0 (std 1), it completed laps after ~100k steps.
     init_log_std: float = 0.0
     obs_clip: float = 10.0  # normalized observation clip, in standard deviations
-    # Env throttle = max_throttle * policy throttle. The env maps throttle 1 to
-    # the full motor torque. A LiDAR centering controller completes a lap at
-    # env throttle 0.1 (~4 m/s) and hits the wall at 0.2 (~5.7 m/s).
-    # With 1.0, PPO also learns laps, but 3 of 20 evaluation episodes failed
-    # after 300k steps (2 rollovers, 1 stuck). With 0.1, all 20 completed a lap.
-    max_throttle: float = 0.1  # env throttle units, in (0, 1]
 
     def __post_init__(self) -> None:
         if not 0.0 < self.gamma <= 1.0 or not 0.0 <= self.gae_lambda <= 1.0:
             raise ValueError("gamma must be in (0, 1] and gae_lambda in [0, 1]")
-        if not 0.0 < self.max_throttle <= 1.0:
-            raise ValueError("max_throttle must be in (0, 1]")
         if self.rollout_steps < 1 or self.epochs < 1 or self.minibatches < 1:
             raise ValueError("rollout_steps, epochs and minibatches must be >= 1")
         # A batch has rollout_steps * num_envs samples, so this check gives
@@ -173,14 +164,8 @@ def sample_action(
 
 @jax.jit
 def greedy_action(net: ActorCritic, obs: jax.Array) -> jax.Array:
-    """The mean action of the policy (deterministic), before env_action()."""
+    """The mean action of the policy (deterministic)."""
     return mlp(net.actor, obs)
-
-
-def env_action(action: npt.NDArray, max_throttle: float) -> npt.NDArray[np.float64]:
-    """The env action for a policy action: clip each value to [-1, 1], then
-    scale the throttle by max_throttle."""
-    return np.clip(action, -1.0, 1.0) * np.array([max_throttle, 1.0])
 
 
 # --- Observation normalization --------------------------------------------
@@ -412,9 +397,7 @@ def collect_rollout(
         action_np = np.asarray(action)
         obs_buf[t], act_buf[t], logp_buf[t], val_buf[t] = obs, action_np, logp, val
         for i, env in enumerate(envs):
-            next_obs, reward, terminated, truncated, info = env.step(
-                env_action(action_np[i], params.max_throttle)
-            )
+            next_obs, reward, terminated, truncated, info = env.step(action_np[i])
             ep_ret[i] += reward
             ep_steps[i] += 1
             rew_buf[t, i] = reward
@@ -568,7 +551,7 @@ def load_policy(path: str) -> tuple[ActorCritic, ObsStats]:
 class Trained:
     net: ActorCritic
     stats: ObsStats
-    params: PPOParams  # obs_clip and max_throttle must be the training values
+    params: PPOParams  # obs_clip must be the training value
 
 
 @dataclass(frozen=True)
@@ -601,7 +584,7 @@ def evaluate(
                         stats, obs[None].astype(np.float64), p.obs_clip
                     )
                     mean = np.asarray(greedy_action(net, jnp.asarray(norm)))[0]
-                    action = env_action(mean, p.max_throttle)
+                    action = mean
                 case RandomActions():
                     action = rng.uniform(-1.0, 1.0, ACTION_DIM)
                 case ZeroAction():

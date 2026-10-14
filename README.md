@@ -36,11 +36,11 @@ Each step applies one action for 17 physics steps of 2 ms, so a step is 34 ms of
 
 ### Action Space
 
-The action space is a `Box(-1, 1, (2,), float32)`. The env clips each value to [-1, 1] and multiplies it by the limit of its actuator.
+The action space is a `Box(-1, 1, (2,), float32)`. The env clips each value to [-1, 1] and multiplies it by the limit of its actuator. The throttle is also multiplied by `throttle_scale` (default 0.1), because most of the motor's range is too fast for this track: at the full limit the car passes 27 m/s, while a simple LiDAR controller laps at about 4 m/s.
 
 | Num | Action | Control Min | Control Max | Actuator (in neoracer.xml) | Type (Unit) |
 |---|---|---|---|---|---|
-| 0 | Throttle, + drives forward | -1 | 1 | `fl_motor`, `fr_motor`, `rl_motor`, `rr_motor` | torque on each wheel, up to 1.0 (N m) |
+| 0 | Throttle, + drives forward | -1 | 1 | `fl_motor`, `fr_motor`, `rl_motor`, `rr_motor` | torque on each wheel, up to 0.1 (N m) |
 | 1 | Steering, + turns left | -1 | 1 | `steer_servo` | steering angle, up to 0.4 (rad) |
 
 ### Observation Space
@@ -102,6 +102,7 @@ obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 |---|---|---|---|
 | `car_path` | **str** | neoracer-mujoco's `neoracer.xml` | Path to the car model |
 | `control_hz` | **float** | `30.0` | Target action rate, rounded to whole physics steps (see `Description`) |
+| `throttle_scale` | **float** | `0.1` | Fraction of the motor torque limit that `action[0] = 1` gives (see `Action Space`) |
 | `max_episode_steps` | **int** | `1800` | Steps before truncation (see `Episode End`) |
 | `spawn` | **SpawnRange** | `lateral_m=0.15, yaw_rad=0.15, resettle_steps=50` | Random start offsets (see `Starting State`) |
 | `termination` | **TerminationConfig** | `upright_rollover_cos=0.5, stuck_window_s=4.0, stuck_progress_rad=0.05` | Rollover and stuck thresholds (see `Episode End`) |
@@ -126,11 +127,11 @@ On a 4-core CPU the script runs about 500 environment steps per second. With see
 policy                 return   outcome
 ppo seed 0, 1M steps   +16.32   20/20 laps
 ppo seed 0, 400k       +16.31   20/20 laps
-random actions          -9.08   20/20 stuck
+random actions          -5.09   20/20 stuck
 zero action             -5.00   20/20 stuck
 ```
 
-A lap without wall contact returns about 16.3, so the trained policy rarely touches a wall. Two settings matter. The initial action noise has to be large (standard deviation 1.0), or the policy learns to stop before the first corner. The script also scales the throttle by 0.1, because most of the throttle range is too fast for this track.
+A lap without wall contact returns about 16.3, so the trained policy rarely touches a wall. Two settings matter. The initial action noise has to be large (standard deviation 1.0), or the policy learns to stop before the first corner.
 
 ## Layout
 

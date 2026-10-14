@@ -146,18 +146,19 @@ class TerminationConfig:
 @dataclass(frozen=True)
 class ObservationBounds:
     """Bounds of the observation space, with a margin over the peaks in 160
-    random-action episodes (full throttle, hard steering, wall crashes) on
-    loop_corridor.xml, with the elliptic friction cone and impratio=10.
+    episodes on loop_corridor.xml at full throttle at the full motor limit
+    (throttle_scale=1) with random steering, each run to its end (most end in
+    a wall crash), with the elliptic friction cone and impratio=10.
     If the track, the spawn range or the car changes, measure the peaks again."""
 
     lidar_m: float = 50.0  # m
-    accel_m_s2: float = 1000.0  # m/s^2; the crash peak is ~517 m/s^2
-    gyro_rad_s: float = 100.0  # rad/s; the peak when the car tumbles is ~39 rad/s
-    # rad; the crash peak is ~1.2 rad. MuJoCo's 0.45 rad joint limit is soft,
-    # so a crash can push past it. Without wall contact the peak is ~0.47 rad.
+    accel_m_s2: float = 1000.0  # m/s^2; the peak, in a crash, is ~590 m/s^2
+    gyro_rad_s: float = 100.0  # rad/s; the peak is ~14 rad/s
+    # rad; the peak is ~0.83 rad. MuJoCo's 0.45 rad joint limit is soft, so a
+    # crash can push past it.
     steer_rad: float = 2.0
-    # m/s; the same limit as test_top_speed_bounded in
-    # validation/test_conformance.py. The highest observed speed is 27.6 m/s.
+    # m/s; the same limit as test_top_speed_bounded in neoracer-mujoco's
+    # validation/test_conformance.py. The car passes 27 m/s on a long straight.
     speed_m_s: float = 40.0
 
 

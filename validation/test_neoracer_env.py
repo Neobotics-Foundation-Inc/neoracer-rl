@@ -208,25 +208,26 @@ def test_throttle_scale_outside_0_1_is_rejected(scale):
 
 
 def test_wall_crash_observations_stay_in_space():
-    """A recorded wall crash pushes steer_cmd_pos to about 1.2 rad, past its
-    soft 0.45 rad joint limit. Every observation must still be inside
-    observation_space. The actions are episode 23 of a full-throttle random
-    run at the full motor limit (throttle_scale=1): default_rng(0), which is
-    PCG64(0), advanced past the 3480 steps (2 draws each) before it."""
+    """A recorded wall crash pushes steer_cmd_pos to about 0.83 rad, past its
+    soft 0.45 rad joint limit. Every observation up to the crash must still
+    be inside observation_space. The actions are full throttle at the full
+    motor limit (throttle_scale=1) and random steering from default_rng(13)."""
     env = NeoRacerEnv(NeoRacerEnvConfig(throttle_scale=1.0))
-    bits = np.random.PCG64(0)
-    bits.advance(2 * 3480)
-    rng = np.random.Generator(bits)
-    env.reset(seed=23)
-    peak = 0.0
-    for _ in range(46):
+    rng = np.random.default_rng(13)
+    env.reset(seed=13)
+    peak, reason = 0.0, None
+    for _ in range(env.config.max_episode_steps):
         action = rng.uniform(-1, 1, size=2).astype(np.float32)
         action[0] = 1.0
-        obs, _reward, _terminated, _truncated, _info = env.step(action)
+        obs, _reward, terminated, truncated, info = env.step(action)
         assert env.observation_space.contains(obs)
         peak = max(peak, abs(float(obs[STEER_CMD_POS])))
+        if terminated or truncated:
+            reason = info["termination_reason"]
+            break
     env.close()
-    assert peak > 1.0, "the recorded crash no longer happens; record a new one"
+    assert reason == "crash"
+    assert peak > 0.8, "the recorded crash no longer happens; record a new one"
 
 
 def test_repeated_random_actions_produce_no_nans(env):

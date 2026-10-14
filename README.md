@@ -17,7 +17,7 @@ This also installs neoracer-mujoco from its GitHub Release. That wheel contains 
 To check that the environment works, run a few episodes with random actions:
 
 ```sh
-python -m examples.gymnasium_random_smoke
+python -m examples.random_actions
 ```
 
 ## The environment
@@ -136,7 +136,7 @@ A lap without wall contact returns about 16.3, so the trained policy rarely touc
 
 ```
 src/neoracer_rl/envs/   NeoRacerEnv and its reward, progress and termination functions
-examples/               training and smoke-test scripts
+examples/               training, and a run with random actions
 validation/             pytest tests
 users/<name>/           personal experiments, not checked by ruff, ty, the tests or CI
 ```

@@ -40,7 +40,6 @@ import numpy.typing as npt
 from neoracer_mujoco import batch, contract, sim
 
 from .neoracer_env import (
-    OBS_DIM,
     NeoRacerEnvConfig,
     TerminationReason,
     angle_around_center,
@@ -225,41 +224,36 @@ class NeoRacerBatch:
         sim.apply_ctrl_and_step(model, data, 0.0, sim.SETTLE_STEPS)
         self._settled = data
 
-    def respawn(self, state: BatchState, rng: np.random.Generator) -> BatchState:
-        """state with a new spawn drawn from rng for each row. A row starts
-        over from it when its episode ends."""
+    def _spawns(self, rng: np.random.Generator) -> tuple[Any, Observations, Rows]:
+        """A new spawn for each row, drawn from rng: the backend state, the
+        first observation and the angle (rad) around the loop center."""
         model, car = self.scene.model, self.scene.car
         datas = [copy.copy(self._settled) for _ in range(self.nbatch)]
         for data in datas:
             apply_spawn_offset(model, data, car, self.config.spawn, rng)
         sensordata = np.stack([d.sensordata for d in datas])
-        return replace(
-            state,
-            spawn=self._sim.initial(datas),
-            spawn_obs=observation(model, car, sensordata),
-            spawn_angle=angle_around_center(model, car, sensordata),
+        return (
+            self._sim.initial(datas),
+            observation(model, car, sensordata),
+            angle_around_center(model, car, sensordata),
         )
+
+    def respawn(self, state: BatchState, rng: np.random.Generator) -> BatchState:
+        """state with a new spawn drawn from rng for each row. A row starts
+        over from it when its episode ends."""
+        spawn, spawn_obs, spawn_angle = self._spawns(rng)
+        return replace(state, spawn=spawn, spawn_obs=spawn_obs, spawn_angle=spawn_angle)
 
     def reset(self, rng: np.random.Generator) -> BatchState:
         """Every row at the start of an episode, from a spawn drawn from rng."""
-        empty = np.zeros(self.nbatch)
-        no_obs = np.zeros((self.nbatch, OBS_DIM), np.float32)
-        state = self.respawn(
-            BatchState(
-                sim=None,
-                spawn=None,
-                spawn_obs=no_obs,
-                spawn_angle=empty,
-                obs=no_obs,
-                progress=start_rows(empty, self._window_len),
-            ),
-            rng,
-        )
-        return replace(
-            state,
-            sim=state.spawn,
-            obs=state.spawn_obs,
-            progress=start_rows(state.spawn_angle, self._window_len),
+        spawn, spawn_obs, spawn_angle = self._spawns(rng)
+        return BatchState(
+            sim=spawn,
+            spawn=spawn,
+            spawn_obs=spawn_obs,
+            spawn_angle=spawn_angle,
+            obs=spawn_obs,
+            progress=start_rows(spawn_angle, self._window_len),
         )
 
     def step(

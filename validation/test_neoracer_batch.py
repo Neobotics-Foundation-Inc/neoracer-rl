@@ -206,3 +206,48 @@ def test_warp_refuses_a_pool_of_tracks():
     config = NeoRacerEnvConfig(tracks=GeneratedTracks(count=2))
     with pytest.raises(ValueError, match="one track per batch"):
         NeoRacerBatch(Warp(), nbatch=2, config=config)
+
+
+def test_a_row_that_starts_over_switches_track_physics_and_progress_together():
+    """On a pool with random physics, row 0 ends its episode after a respawn
+    drew it another track. It then starts over on the new track, with the
+    model, track index, first observation and lap angle of its spawn, and
+    steps like NeoRacerEnv from that spawn, bit for bit. Row 1 goes on."""
+    config = NeoRacerEnvConfig(
+        tracks=GeneratedTracks(count=3), physics=RANDOM_PHYSICS, throttle_scale=1.0
+    )
+    sim_batch = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
+    state = sim_batch.reset(np.random.default_rng(0))
+    # A respawn from default_rng(seed) draws row 0 the spawn of reset(seed).
+    seed = next(
+        k
+        for k in range(1, 50)
+        if sim_batch.respawn(state, np.random.default_rng(k)).spawn_track[0]
+        != state.track[0]
+    )
+    state = sim_batch.respawn(state, np.random.default_rng(seed))
+    first_track = int(state.track[1])
+    action = np.array([[1.0, 0.0], [0.0, 0.0]], dtype=np.float32)
+    state, out = sim_batch.step(state, action)
+    while not out.done[0]:
+        state, out = sim_batch.step(state, action)
+    assert not out.done[1] and state.track[1] == first_track
+    assert state.track[0] == state.spawn_track[0]
+    assert state.sim.models[0] is state.spawn.models[0]
+    np.testing.assert_array_equal(state.obs[0], state.spawn_obs[0])
+    assert state.progress.angle[0] == state.spawn_angle[0]
+
+    env = NeoRacerEnv(config)
+    obs, _ = env.reset(seed=seed)
+    np.testing.assert_array_equal(state.obs[0], obs)
+    rng = np.random.default_rng(2)
+    for _ in range(30):
+        row = rng.uniform((0.0, -1.0), (0.5, 1.0)).astype(np.float32)
+        state, out = sim_batch.step(state, np.stack([row, action[1]]))
+        obs, reward, terminated, truncated, _ = env.step(row)
+        np.testing.assert_array_equal(out.obs[0], obs)
+        assert out.reward[0] == reward
+        if terminated or truncated:
+            break
+    sim_batch.close()
+    env.close()

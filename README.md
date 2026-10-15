@@ -265,22 +265,22 @@ python -m examples.train_ppo --tracks generated --total-steps 400000 --seed 0 --
 python -m examples.train_ppo --eval gen.npz --tracks generated --first-track-seed 1000 --episodes 20
 ```
 
-We trained seeds 0 to 2 for 400k steps on the 16 tracks of difficulty 1 from seed 0. All three learned to lap, the first laps after 55k to 117k steps, and from 300k steps on almost 90% of the training episodes were laps. Then we evaluated each policy, and the baseline policies trained on `loop_corridor`, on 20 episodes each of `loop_corridor`, of the training pool, and of a held-out pool of 16 tracks from seed 1000:
+We trained seeds 0 to 2 for 400k steps on the 16 tracks of difficulty 1 from seed 0. All three learned to lap, the first laps after 74k to 92k steps, and from 300k steps on 86% to 99% of the training episodes were laps. Then we evaluated each policy, and the baseline policies trained on `loop_corridor`, on 20 episodes each of `loop_corridor`, of the training pool, and of a held-out pool of 16 tracks from seed 1000:
 
 ```
                                     laps out of 20
 policy                      loop_corridor   training pool   held-out pool
 loop_corridor, seed 0                   0               0               0
-               seed 1                  20              12              13
-               seed 2                  20               4               8
+               seed 1                  20               3               1
+               seed 2                  20               0               2
                seed 3                   0               0               0
-               seed 4                  20               6               8
-generated,     seed 0                  15              16              14
-               seed 1                  20              15              13
+               seed 4                  20               1               0
+generated,     seed 0                  20               7              10
+               seed 1                  19              14              10
                seed 2                  20              20              20
 ```
 
-A policy trained on generated tracks laps tracks that it never saw nearly as often as those it trained on, and also laps `loop_corridor`, which it never saw either. A policy trained on `loop_corridor` laps at most two thirds of the generated tracks. Training on the pool also failed less often: three seeds out of three learned to lap, against three out of five on `loop_corridor`. It is slower per step: 740 env steps per second on 4 cores, against 990 on `loop_corridor`.
+A policy trained on generated tracks laps tracks that it never saw about as often as those it trained on, and also laps `loop_corridor`, which it never saw either. A policy trained on `loop_corridor`, which turns only left, laps at most 3 of 20 generated tracks, which also turn right. Seed 2 laps every track; seeds 0 and 1 lap about half the generated ones. Training on the pool also failed less often: three seeds out of three learned to lap, against three out of five on `loop_corridor`. It is slower per step: 740 env steps per second on 4 cores, against 990 on `loop_corridor`.
 
 ## Layout
 

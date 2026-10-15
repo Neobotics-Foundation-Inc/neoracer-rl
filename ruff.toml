@@ -8,5 +8,6 @@ extend-exclude = ["users"]
 # remove this section.
 [lint.flake8-bugbear]
 extend-immutable-calls = [
+  "neoracer_mujoco.physics.PhysicsRanges",
   "neoracer_rl.envs.neoracer_env.NeoRacerEnvConfig",
 ]

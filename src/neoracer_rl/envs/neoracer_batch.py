@@ -24,8 +24,8 @@ one and returns the next:
 A row whose episode ends starts over in the same step: out.obs is the last
 observation of the episode, and state.obs the first of the next one.
 
-Limit: a row starts over from the spawn that the last reset or respawn drew
-for it, so its episodes share a spawn until the next respawn. NeoRacerEnv
+Limit: a row starts over from the spawn and the physics that the last reset
+or respawn drew for it, so its episodes share them until the next respawn. NeoRacerEnv
 draws a new spawn for each episode. Call respawn every few hundred steps,
 for example once per PPO rollout, to see as many spawns.
 """
@@ -37,7 +37,7 @@ from typing import Any, assert_never
 import mujoco
 import numpy as np
 import numpy.typing as npt
-from neoracer_mujoco import batch, contract, sim
+from neoracer_mujoco import batch, contract, physics, sim
 
 from .neoracer_env import (
     NeoRacerEnvConfig,
@@ -201,17 +201,17 @@ class NeoRacerBatch:
     ) -> None:
         self.config = config
         self.nbatch = nbatch
-        self.scene = loop_scene(config)
+        self.scene = loop_scene(config, visuals=False)
         model = self.scene.model
         self._sim: batch.Batch[Any, Any, Any]
         match backend:
             case Cpu(nthread=nthread):
-                self._sim = batch.CpuBatch(model, nbatch, nthread)
+                self._sim = batch.CpuBatch(self.scene, nbatch, nthread)
             case Warp():
                 # Imported here: the jax extra of neoracer-mujoco is optional.
                 from neoracer_mujoco import batch_warp
 
-                self._sim = batch_warp.WarpBatch(model, nbatch)
+                self._sim = batch_warp.WarpBatch(self.scene, nbatch)
             case _:
                 assert_never(backend)
         self._nstep = substeps_per_action(config, model)
@@ -229,11 +229,13 @@ class NeoRacerBatch:
         first observation and the angle (rad) around the loop center."""
         model, car = self.scene.model, self.scene.car
         datas = [copy.copy(self._settled) for _ in range(self.nbatch)]
-        for data in datas:
+        rows = []
+        for data in datas:  # in the order of NeoRacerEnv.reset
             apply_spawn_offset(model, data, car, self.config.spawn, rng)
+            rows.append(physics.sample(self.config.physics, rng))
         sensordata = np.stack([d.sensordata for d in datas])
         return (
-            self._sim.initial(datas),
+            self._sim.initial(datas, [self.scene] * self.nbatch, rows),
             observation(model, car, sensordata),
             angle_around_center(model, car, sensordata),
         )

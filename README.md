@@ -73,6 +73,32 @@ A lap therefore returns about 2π + 10 ≈ 16.3, slightly more if the last step 
 
 The car starts on the bottom straight at (0, -2.5), facing the forward direction of the loop, and settles for 400 physics steps. `reset()` then moves it sideways by a value from 𝒰(-0.15, 0.15) m, turns it by a value from 𝒰(-0.15, 0.15) rad, and settles it for 50 more physics steps.
 
+`reset()` then draws the car's physics for the episode from `config.physics` (see `Physics randomization`). By default it changes nothing.
+
+### Physics randomization
+
+Nobody knows the real car's grip, mass or motor strength exactly. To train a policy that copes with that, `NeoRacerEnvConfig.physics` gives a range for each of four factors on the values of the car XML. `reset()` draws one value of each from its range, and the episode runs with them:
+
+| Factor | Changes |
+|---|---|
+| `wheel_friction` | the friction of the wheel contacts, and so how much the wheels slip |
+| `chassis_mass` | the mass and inertia of the car body |
+| `motor_torque` | the torque that the motors give for an action |
+| `steer_stiffness` | the stiffness of the steering servo |
+
+```python
+from neoracer_mujoco.physics import PhysicsRanges, Range
+
+from neoracer_rl.envs import NeoRacerEnv, NeoRacerEnvConfig
+
+ranges = PhysicsRanges(wheel_friction=Range(0.5, 1.2), motor_torque=Range(0.7, 1.3))
+env = NeoRacerEnv(NeoRacerEnvConfig(physics=ranges))
+obs, info = env.reset(seed=0)
+print(env.physics)  # the factors of this episode
+```
+
+The car settles at its spawn with the physics of the XML, so with another mass its suspension settles again in the first steps of the episode. A range of one value takes no random draw, so the default ranges leave every episode as it was. `NeoRacerBatch` draws the physics of each row at each `respawn`, in the same order as `reset()`, so a row on the CPU still steps like `NeoRacerEnv`, bit for bit.
+
 ### Episode End
 
 #### Termination
@@ -110,6 +136,7 @@ obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 | `termination` | **TerminationConfig** | `upright_rollover_cos=0.5, stuck_window_s=4.0, stuck_progress_rad=0.05` | Rollover and stuck thresholds (see `Episode End`) |
 | `reward` | **RewardConfig** | `progress_weight=1.0, rollover_penalty=10.0, crash_penalty=5.0, stuck_penalty=5.0, lap_bonus=10.0` | Reward weights (see `Rewards`) |
 | `obs_bounds` | **ObservationBounds** | see the table in `Observation Space` | Bounds of the observation space |
+| `physics` | **PhysicsRanges** | every factor 1.0 | Ranges of the car's physics (see `Physics randomization`) |
 
 `render_mode="human"` is a separate argument of `NeoRacerEnv`. It opens the MuJoCo viewer.
 
@@ -185,6 +212,31 @@ zero action                                                   -5.00   20 stuck
 Three of the five seeds learn to lap. Once a seed finds the lap, almost every episode is one: about 243 steps (8.3 s) without touching a wall, for a return of about 16.3. The other two seeds fail in different ways. Seed 0 learns to back away from the first corner and creep until it hits the wall. Seed 3 learns to drive forward, but too slowly: its training episodes run out of time at about 0.84 laps, and its mean action hits the wall a fifth of the way around. So compare changes over several seeds, not one.
 
 The initial action noise is large (standard deviation 1.0) on purpose; the comment on `init_log_std` in `PPOParams` says why.
+
+### Training with random physics
+
+`--random-physics` trains and evaluates with the ranges of `RANDOM_PHYSICS` in `train_ppo.py`: wheel friction 0.3 to 1.2, chassis mass 0.7 to 1.5, motor torque 0.5 to 1.5 and steering stiffness 0.5 to 2.0. These are an example to start from, wide enough to see an effect, not measured on the real car.
+
+We trained seeds 0 to 4 for 400k steps with them, as for the baseline, and evaluated every policy of both sets with one factor changed at a time, on 10 episodes each. The table gives the laps out of 10 of each seed:
+
+```
+                       trained on the XML     trained with random physics
+                       seed 0  1  2  3  4     seed 0  1  2  3  4
+wheel_friction  0.3         0  0  0  0  0          0  0  0  0  0
+                0.5         0  0  0  0  0          2  0  0  0  0
+                0.75        0  0  0  0  5          9  0  0 10  0
+                1.0         0 10 10  0 10          7  0  0 10  0
+                1.2         0 10 10  0 10          4  0  0 10  0
+chassis_mass    0.7         0 10 10  0 10          6  0  0 10  0
+                1.5         0 10 10  0 10          9  0  0 10  0
+motor_torque    0.5         0 10 10  8 10         10  0  0 10  0
+                0.75        0 10 10  0 10         10  0  0 10  0
+                1.5         0  0  0  0  0          0  0  0 10  0
+steer_stiffness 0.5         0 10 10  4 10         10  0  0 10  0
+                2.0         0 10  9  9 10         10  0  0 10  0
+```
+
+The policies trained on the XML lap only near the physics they trained on: they lose the corner as soon as the wheels have less grip, and they all crash with 50% more motor torque, which drives the car too fast for the corners. Random physics makes learning harder, as two of the five seeds learned to lap instead of three, but seed 3 then laps on every change but the two lowest frictions, and seed 0 laps on more of the low-friction settings than any policy trained on the XML. The run time is about the same: on 4 cores, 960 env steps per second with random physics against 990 without.
 
 ## Layout
 

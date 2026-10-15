@@ -10,6 +10,7 @@ import pytest
 from neoracer_mujoco.physics import Physics, PhysicsRanges, Range
 
 from neoracer_rl.envs import (
+    GeneratedTracks,
     NeoRacerEnv,
     NeoRacerEnvConfig,
     TerminationReason,
@@ -97,14 +98,20 @@ RANDOM_PHYSICS = PhysicsRanges(
 
 
 @pytest.mark.parametrize(
-    "ranges", [PhysicsRanges(), RANDOM_PHYSICS], ids=["nominal", "random"]
+    "config",
+    [
+        NeoRacerEnvConfig(),
+        NeoRacerEnvConfig(physics=RANDOM_PHYSICS),
+        NeoRacerEnvConfig(tracks=GeneratedTracks(count=3), physics=RANDOM_PHYSICS),
+    ],
+    ids=["nominal", "random-physics", "generated-tracks"],
 )
-def test_a_cpu_row_steps_like_neoracer_env(ranges):
+def test_a_cpu_row_steps_like_neoracer_env(config):
     """Rows 0 and 1 of a batch reset with default_rng(7) start where
-    NeoRacerEnv starts after reset(seed=7) and after a second reset, with the
-    same physics. With the same actions, they give the same observations,
-    rewards and episode ends, bit for bit, until the first episode ends."""
-    config = NeoRacerEnvConfig(physics=ranges)
+    NeoRacerEnv starts after reset(seed=7) and after a second reset, on the
+    same track and with the same physics. With the same actions, they give
+    the same observations, rewards and episode ends, bit for bit, until the
+    first episode ends."""
     sim_batch = NeoRacerBatch(Cpu(nthread=2), nbatch=2, config=config)
     state = sim_batch.reset(np.random.default_rng(7))
     envs = [NeoRacerEnv(config), NeoRacerEnv(config)]
@@ -112,7 +119,7 @@ def test_a_cpu_row_steps_like_neoracer_env(ranges):
     envs[1].reset(seed=7)
     second = envs[1].reset()[0]
     np.testing.assert_array_equal(state.obs, np.stack([first, second]))
-    assert (envs[0].physics == Physics()) == (ranges == PhysicsRanges())
+    assert (envs[0].physics == Physics()) == (config.physics == PhysicsRanges())
     rng = np.random.default_rng(1)
     ended = False
     while not ended:
@@ -190,3 +197,57 @@ def test_the_warp_backend_follows_the_cpu_backend():
     np.testing.assert_allclose(
         observations[1][:, :8], observations[0][:, :8], atol=0.05
     )
+
+
+def test_warp_refuses_a_pool_of_tracks():
+    """MuJoCo Warp steps one track per batch."""
+    for module in ("jax", "mujoco.mjx", "mujoco_warp"):
+        pytest.importorskip(module)
+    config = NeoRacerEnvConfig(tracks=GeneratedTracks(count=2))
+    with pytest.raises(ValueError, match="one track per batch"):
+        NeoRacerBatch(Warp(), nbatch=2, config=config)
+
+
+def test_a_row_that_starts_over_switches_track_physics_and_progress_together():
+    """On a pool with random physics, row 0 ends its episode after a respawn
+    drew it another track. It then starts over on the new track, with the
+    model, track index, first observation and lap angle of its spawn, and
+    steps like NeoRacerEnv from that spawn, bit for bit. Row 1 goes on."""
+    config = NeoRacerEnvConfig(
+        tracks=GeneratedTracks(count=3), physics=RANDOM_PHYSICS, throttle_scale=1.0
+    )
+    sim_batch = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
+    state = sim_batch.reset(np.random.default_rng(0))
+    # A respawn from default_rng(seed) draws row 0 the spawn of reset(seed).
+    seed = next(
+        k
+        for k in range(1, 50)
+        if sim_batch.respawn(state, np.random.default_rng(k)).spawn_track[0]
+        != state.track[0]
+    )
+    state = sim_batch.respawn(state, np.random.default_rng(seed))
+    first_track = int(state.track[1])
+    action = np.array([[1.0, 0.0], [0.0, 0.0]], dtype=np.float32)
+    state, out = sim_batch.step(state, action)
+    while not out.done[0]:
+        state, out = sim_batch.step(state, action)
+    assert not out.done[1] and state.track[1] == first_track
+    assert state.track[0] == state.spawn_track[0]
+    assert state.sim.models[0] is state.spawn.models[0]
+    np.testing.assert_array_equal(state.obs[0], state.spawn_obs[0])
+    assert state.progress.angle[0] == state.spawn_angle[0]
+
+    env = NeoRacerEnv(config)
+    obs, _ = env.reset(seed=seed)
+    np.testing.assert_array_equal(state.obs[0], obs)
+    rng = np.random.default_rng(2)
+    for _ in range(30):
+        row = rng.uniform((0.0, -1.0), (0.5, 1.0)).astype(np.float32)
+        state, out = sim_batch.step(state, np.stack([row, action[1]]))
+        obs, reward, terminated, truncated, _ = env.step(row)
+        np.testing.assert_array_equal(out.obs[0], obs)
+        assert out.reward[0] == reward
+        if terminated or truncated:
+            break
+    sim_batch.close()
+    env.close()

@@ -19,8 +19,11 @@ from gymnasium import spaces
 from gymnasium.utils.env_checker import check_env
 from neoracer_mujoco import assets, sim
 from neoracer_mujoco.physics import PhysicsRanges, Range
+from neoracer_mujoco.track_generation import Track
+from neoracer_mujoco.track_generation.mjcf import to_start_frame
 
 from neoracer_rl.envs import (
+    GeneratedTracks,
     NeoRacerEnv,
     NeoRacerEnvConfig,
     RewardConfig,
@@ -32,6 +35,7 @@ from neoracer_rl.envs import (
     start_progress,
     termination,
 )
+from neoracer_rl.envs.neoracer_env import arenas, lap_angle
 
 STEER_CMD_POS = 18  # observation index of steer_cmd_pos (rad)
 LAP = 2.0 * np.pi  # rad, one full lap of progress
@@ -482,3 +486,38 @@ def test_reset_draws_the_physics_of_the_episode():
     assert drawn[0] == drawn[2] != drawn[1]
     assert env.scene.model.bind_scalar(wheel).friction[0] == nominal
     env.close()
+
+
+def test_lap_angle_follows_the_centerline_of_a_generated_track():
+    """With the car moved along the centerline of a generated track, the lap
+    angle is 2 pi times the share of the lap behind it."""
+    (arena,) = arenas(NeoRacerEnvConfig(tracks=GeneratedTracks(count=1)), False)
+    track, scene = arena.layout, arena.scene
+    assert isinstance(track, Track)
+    data = mujoco.MjData(scene.model)
+    center = to_start_frame(track, track.center)
+    for i in range(0, len(center), 97):
+        data.bind_scalar(scene.car.joint).qpos[:2] = center[i]
+        mujoco.mj_forward(scene.model, data)
+        expected = 2.0 * np.pi * track.distance_along[i] / track.total_length
+        assert lap_angle(arena, data.sensordata) == pytest.approx(expected)
+
+
+def test_a_pool_gives_episodes_on_several_tracks():
+    """reset draws the track of each episode from the pool, and the car
+    starts at the beginning of the lap on each."""
+    env = NeoRacerEnv(NeoRacerEnvConfig(tracks=GeneratedTracks(count=3)))
+    seen = set()
+    for seed in range(12):
+        obs, _info = env.reset(seed=seed)
+        assert env.observation_space.contains(obs)
+        seen.add(id(env.scene))
+        angle = env._progress.angle
+        assert min(angle, 2.0 * np.pi - angle) < 0.1  # rad, at the start
+    assert len(seen) == 3
+    env.close()
+
+
+def test_too_few_seeds_for_a_pool_is_an_error():
+    with pytest.raises(ValueError, match="pool"):
+        GeneratedTracks(count=0)

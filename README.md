@@ -30,7 +30,7 @@ python -m examples.random_actions
 
 ### Description
 
-The car drives on `loop_corridor`, a closed corridor about 1 m wide. The goal is to complete one lap counterclockwise (seen from above) without touching a wall, rolling over or getting stuck. The agent sees only what the real car's sensors measure, and nothing from the simulator's internal state, so a policy trained here can in principle run on the car.
+The car drives on `loop_corridor`, a closed corridor about 1 m wide, or on generated tracks (see `Tracks`). The goal is to complete one lap counterclockwise (seen from above) without touching a wall, rolling over or getting stuck. The agent sees only what the real car's sensors measure, and nothing from the simulator's internal state, so a policy trained here can in principle run on the car.
 
 Each step applies one action for 17 physics steps of 2 ms, so a step is 34 ms of simulated time. That is the closest whole number of physics steps to 1/30 s, the scan rate of the car's LiDAR.
 
@@ -99,6 +99,23 @@ print(env.physics)  # the factors of this episode
 
 The car settles at its spawn with the physics of the XML, so with another mass its suspension settles again in the first steps of the episode. A range of one value takes no random draw, so the default ranges leave every episode as it was. `NeoRacerBatch` draws the physics of each row at each `respawn`, in the same order as `reset()`, so a row on the CPU still steps like `NeoRacerEnv`, bit for bit.
 
+### Tracks
+
+`NeoRacerEnvConfig.tracks` picks where the car drives. `LoopCorridor()`, the default, is `loop_corridor`. `GeneratedTracks(difficulty, count, first_seed)` is a pool of tracks from neoracer-mujoco's track generator: the first `count` seeds from `first_seed` on that give a track, of difficulty 0 (gentle and wide) to 3 (tight and narrow). `reset()` draws the track of each episode from the pool, before the spawn offset and the physics:
+
+```python
+from neoracer_rl.envs import GeneratedTracks, NeoRacerEnv, NeoRacerEnvConfig
+
+env = NeoRacerEnv(NeoRacerEnvConfig(tracks=GeneratedTracks(difficulty=1, count=16)))
+obs, info = env.reset(seed=0)
+```
+
+On a generated track the car starts at the beginning of the centerline, facing along it, and progress is the distance along the centerline, as an angle: one lap is 2π on every track, so the rewards and the episode ends are the same as on `loop_corridor`. The pool is generated when the env is made, about 0.2 s per track.
+
+`NeoRacerBatch` draws the track of each row at each `respawn`, so one batch steps on many tracks. Every track has 192 boxes per wall, so all of them have the same sizes, as `CpuBatch` needs. MuJoCo Warp collides against the walls of the model it was made from, so `Warp()` steps one track per batch and refuses a pool.
+
+A generated track has hundreds of wall boxes, which the collision check and the eight LiDAR rays test at every physics step. Training on them is slower: on 4 cores, 64 rows step about 2,500 env steps per second on generated tracks against 7,500 on `loop_corridor`.
+
 ### Episode End
 
 #### Termination
@@ -129,6 +146,7 @@ obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `car_path` | **str** | neoracer-mujoco's `neoracer.xml` | Path to the car model |
+| `tracks` | **LoopCorridor \| GeneratedTracks** | `LoopCorridor()` | Where the car drives (see `Tracks`) |
 | `control_hz` | **float** | `30.0` | Target action rate, rounded to whole physics steps (see `Description`) |
 | `throttle_scale` | **float** | `0.1` | Fraction of the motor torque limit that `action[0] = 1` gives (see `Action Space`) |
 | `max_episode_steps` | **int** | `1800` | Steps before truncation (see `Episode End`) |
@@ -237,6 +255,32 @@ steer_stiffness 0.5         0 10 10  4 10         10  0  0 10  0
 ```
 
 The policies trained on the XML lap only near the physics they trained on: they lose the corner as soon as the wheels have less grip, and they all crash with 50% more motor torque, which drives the car too fast for the corners. Random physics makes learning harder, as two of the five seeds learned to lap instead of three, but seed 3 then laps on every change but the two lowest frictions, and seed 0 laps on more of the low-friction settings than any policy trained on the XML. The run time is about the same: on 4 cores, 960 env steps per second with random physics against 990 without.
+
+### Training on generated tracks
+
+`--tracks generated` trains on a pool of generated tracks (`--pool`, default 16, and `--difficulty`, default 1), and `--first-track-seed` picks the seeds of the pool, for example to evaluate on tracks that the policy never saw:
+
+```sh
+python -m examples.train_ppo --tracks generated --total-steps 400000 --seed 0 --out gen.npz
+python -m examples.train_ppo --eval gen.npz --tracks generated --first-track-seed 1000 --episodes 20
+```
+
+We trained seeds 0 to 2 for 400k steps on the 16 tracks of difficulty 1 from seed 0. All three learned to lap, the first laps after 55k to 117k steps, and from 300k steps on almost 90% of the training episodes were laps. Then we evaluated each policy, and the baseline policies trained on `loop_corridor`, on 20 episodes each of `loop_corridor`, of the training pool, and of a held-out pool of 16 tracks from seed 1000:
+
+```
+                                    laps out of 20
+policy                      loop_corridor   training pool   held-out pool
+loop_corridor, seed 0                   0               0               0
+               seed 1                  20              12              13
+               seed 2                  20               4               8
+               seed 3                   0               0               0
+               seed 4                  20               6               8
+generated,     seed 0                  15              16              14
+               seed 1                  20              15              13
+               seed 2                  20              20              20
+```
+
+A policy trained on generated tracks laps tracks that it never saw nearly as often as those it trained on, and also laps `loop_corridor`, which it never saw either. A policy trained on `loop_corridor` laps at most two thirds of the generated tracks. Training on the pool also failed less often: three seeds out of three learned to lap, against three out of five on `loop_corridor`. It is slower per step: 740 env steps per second on 4 cores, against 990 on `loop_corridor`.
 
 ## Layout
 

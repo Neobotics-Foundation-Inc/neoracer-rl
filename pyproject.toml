@@ -11,7 +11,7 @@ requires-python = ">=3.15"
 dependencies = [
     # The simulator: the car model, the tracks and the sensors. The wheel
     # contains the meshes, so a student does not need Git LFS.
-    "neoracer-mujoco @ https://github.com/Neobotics-Foundation-Inc/neoracer-mujoco/releases/download/v0.10.0/neoracer_mujoco-0.10.0-py3-none-any.whl",
+    "neoracer-mujoco @ https://github.com/Neobotics-Foundation-Inc/neoracer-mujoco/releases/download/v0.11.0/neoracer_mujoco-0.11.0-py3-none-any.whl",
     "gymnasium>=1.0",
     # JAX and optax, not PyTorch: PyTorch has no wheels for Python 3.15.
     "jax>=0.11",
@@ -22,7 +22,7 @@ dependencies = [
 # Optional: NeoRacerBatch's Warp backend, for a CUDA GPU. Also install jax[cuda12]
 # or jax[cuda13] for the GPU.
 warp = [
-    "neoracer-mujoco[jax] @ https://github.com/Neobotics-Foundation-Inc/neoracer-mujoco/releases/download/v0.10.0/neoracer_mujoco-0.10.0-py3-none-any.whl",
+    "neoracer-mujoco[jax] @ https://github.com/Neobotics-Foundation-Inc/neoracer-mujoco/releases/download/v0.11.0/neoracer_mujoco-0.11.0-py3-none-any.whl",
 ]
 dev = [
     "pytest>=7.4",

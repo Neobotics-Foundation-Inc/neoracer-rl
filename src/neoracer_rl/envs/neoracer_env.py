@@ -230,7 +230,8 @@ class NeoRacerEnvConfig:
     # motor, in (0, 1]. At the full voltage the car reaches about 3.5 m/s.
     # The corners of loop_corridor need less (a LiDAR centering controller at
     # a fixed throttle laps at 0.5 and hits the wall at 0.75), but PPO can learn
-    # to slow for them: training seed 3 of the README's baseline laps at 1.0.
+    # to slow for them: in EXPERIMENTS.md, the policies trained with random
+    # physics or on generated tracks lap at 1.0.
     throttle_scale: float = 1.0
     max_episode_steps: int = 1800  # 60 s at 30 Hz
     obs_bounds: ObservationBounds = ObservationBounds()

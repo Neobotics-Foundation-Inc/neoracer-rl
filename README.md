@@ -40,8 +40,8 @@ The action space is a `Box(-1, 1, (2,), float32)`. The env clips each value to [
 
 | Num | Action | Control Min | Control Max | Actuator (in neoracer.xml) | Type (Unit) |
 |---|---|---|---|---|---|
-| 0 | Throttle, + drives forward | -1 | 1 | `motor`, one DC motor driving all four wheels through open differentials | voltage, up to 7.4 (V) |
-| 1 | Steering, + turns left | -1 | 1 | `steer_servo` | steering angle, up to 0.4 (rad) |
+| 0 | Throttle, + drives forward | -1 | 1 | `motor`, one DC motor driving all four wheels through open differentials | voltage, up to 11.1 (V) |
+| 1 | Steering, + turns left | -1 | 1 | `steer_servo` | steering angle, up to 0.4403 (rad), full lock |
 
 ### Observation Space
 

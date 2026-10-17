@@ -36,12 +36,12 @@ Each step applies one action for 12 physics steps of 1/360 s, so a step is 1/30 
 
 ### Action Space
 
-The action space is a `Box(-1, 1, (2,), float32)`. The env clips each value to [-1, 1] and multiplies it by the limit of its actuator. The throttle is also multiplied by `throttle_scale` (default 1.0, the full battery voltage). At the full voltage the car reaches about 4.35 m/s. That is too fast for the corners at a fixed throttle (a simple LiDAR controller laps at 0.5 but hits the wall at 0.75), but PPO can learn to slow down for them: training seed 1 of the baseline below laps with `throttle_scale` 1.0, and does not with 0.5 or 0.3.
+The action space is a `Box(-1, 1, (2,), float32)`. The env clips each value to [-1, 1] and multiplies it by the limit of its actuator. The throttle is also multiplied by `throttle_scale` (default 1.0, the full battery voltage). At the full voltage the car reaches about 3.5 m/s. That is too fast for the corners at a fixed throttle (a simple LiDAR controller laps at 0.5 but hits the wall at 0.75), but PPO can learn to slow down for them: training seed 3 of the baseline below laps with `throttle_scale` 1.0.
 
 | Num | Action | Control Min | Control Max | Actuator (in neoracer.xml) | Type (Unit) |
 |---|---|---|---|---|---|
-| 0 | Throttle, + drives forward | -1 | 1 | `motor`, one DC motor driving all four wheels through open differentials | voltage, up to 7.4 (V) |
-| 1 | Steering, + turns left | -1 | 1 | `steer_servo` | steering angle, up to 0.4 (rad) |
+| 0 | Throttle, + drives forward | -1 | 1 | `motor`, one DC motor driving all four wheels through open differentials | voltage, up to 11.1 (V) |
+| 1 | Steering, + turns left | -1 | 1 | `steer_servo` | steering angle, up to 0.4403 (rad), full lock |
 
 ### Observation Space
 
@@ -218,16 +218,16 @@ We trained seeds 0 to 4 for 400k steps each, on a 4-core 2.8 GHz Xeon, where a r
 ```
                  laps in training, by 50k steps of training     evaluation, 20 episodes
 seed  first lap   50k 100k 150k 200k 250k 300k 350k 400k     return   outcome
-0     -            0%   0%   0%   0%   0%   0%   0%   0%      -4.05   13 crash, 7 stuck
-1     102k         0%   0%  95% 100%  96%  99%  98%  98%     +16.32   20 lap
-2     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.81   19 stuck, 1 crash
-3     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.87   12 stuck, 8 crash
-4     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.99   17 stuck, 3 crash
-random actions                                                -4.99   18 stuck, 2 crash
+0     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.96   16 stuck, 4 crash
+1     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.89   19 crash, 1 stuck
+2     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.73   16 stuck, 4 crash
+3     293k         0%   0%   0%   0%   0%  13%  81%  84%     +14.72   18 lap, 2 crash
+4     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.97   20 stuck
+random actions                                                -5.06   18 stuck, 2 crash
 zero action                                                   -5.00   20 stuck
 ```
 
-One of the five seeds learns to lap. Once it finds the lap, almost every episode is one: about 177 steps (5.9 s) without touching a wall, for a return of about 16.3. The other four seeds learn the same thing: they creep for about 650 steps (22 s) to the first corner, 15% to 19% of the lap, and stop there or touch its wall. So compare changes over several seeds, not one.
+One of the five seeds learns to lap, late: its first lap comes after 293k steps. It drives the lap slowly, about 800 steps (27 s) without touching a wall, for a return of about 16.3, and crashes in 2 of the 20 evaluation episodes. The other four seeds learn the same thing: they creep for about 520 to 640 steps (17 to 21 s) to the first corner, 16% to 20% of the lap, and stop there or touch its wall. So compare changes over several seeds, not one.
 
 The initial action noise is large (standard deviation 1.0) on purpose; the comment on `init_log_std` in `PPOParams` says why.
 
@@ -240,21 +240,21 @@ We trained seeds 0 to 4 for 400k steps with them, as for the baseline, and evalu
 ```
                        trained on the XML     trained with random physics
                        seed 0  1  2  3  4     seed 0  1  2  3  4
-wheel_friction  0.3         0  0  0  0  0          0  0  0  5  0
-                0.5         0  0  0  0  0          0  0  0  7  0
-                0.75        0 10  0  0  0          0  0  0  6  0
-                1.0         0 10  0  0  0          0  0  0 10  0
-                1.2         0 10  0  0  0          0  0  0  7  0
-chassis_mass    0.7         0 10  0  0  0          0  0  0  9  0
-                1.5         0 10  0  0  0          0  0  0  7  0
-motor_torque    0.5         0 10  0  0  0          0  0  0  7  0
-                0.75        0 10  0  0  0          0  0  0  8  0
-                1.5         0 10  0  0  0          0  0  0  8  0
-steer_stiffness 0.5         0 10  0  0  0          0  0  0  7  0
-                2.0         0 10  0  0  0          0  0  0  7  0
+wheel_friction  0.3         0  0  0 10  0          0  0  0  0  0
+                0.5         0  0  0 10  0          0 10  0  0  0
+                0.75        0  0  0 10  0          0 10  0  0  0
+                1.0         0  0  0 10  0          0 10  0  0  0
+                1.2         0  0  0 10  0          0 10  0  0  0
+chassis_mass    0.7         0  0  0  8  0          0 10  0  0  0
+                1.5         0  0  0 10  0          0 10  0  0  0
+motor_torque    0.5         0  0  0 10  0          0 10  0  0  0
+                0.75        0  0  0 10  0          0 10  0  0  0
+                1.5         0  0  0  1  0          0 10  0  0  0
+steer_stiffness 0.5         0  0  0  9  0          0 10  0  0  0
+                2.0         0  0  0  7  0          0 10  0  0  0
 ```
 
-The one policy trained on the XML that laps keeps lapping under every change but the two lowest frictions, where the wheels lose the corner. With random physics one seed of five learned to lap, seed 3, from 225k steps on. It laps on every change, 5 of 10 times even with 0.3 of the grip, but less reliably than the policy trained on the XML laps near the XML's physics. The run time is about the same: on 4 cores, 980 env steps per second with random physics against 1,030 without.
+The one policy trained on the XML that laps keeps lapping under most changes, even with 0.3 of the grip. With 1.5 times the motor torque it laps only 1 of 10 times: the same actions drive it faster than its corners allow. With random physics one seed of five learned to lap, seed 1, from 92k steps on. It laps 10 of 10 on every change but the lowest grip. The run time is about the same: on 4 cores, 980 env steps per second with random physics against 1,030 without.
 
 ### Training on generated tracks
 
@@ -265,22 +265,22 @@ python -m examples.train_ppo --tracks generated --total-steps 400000 --seed 0 --
 python -m examples.train_ppo --eval gen.npz --tracks generated --first-track-seed 1000 --episodes 20
 ```
 
-We trained seeds 0 to 2 for 400k steps on the 16 tracks of difficulty 1 from seed 0. Seed 2 learned to lap: its first lap came after 219k steps, and in the last 50k steps 98% of the training episodes were laps. Seed 1 reached about 60% of a lap by the end, and seed 0 learned to drive backward. Then we evaluated each policy, and the baseline policies trained on `loop_corridor`, on 20 episodes each of `loop_corridor`, of the training pool, and of a held-out pool of 16 tracks from seed 1000:
+We trained seeds 0 to 2 for 400k steps on the 16 tracks of difficulty 1 from seed 0. All three learned to lap: their first laps came after 139k, 139k and 72k steps, and in the last 50k steps 86%, 99% and 85% of their training episodes were laps. Then we evaluated each policy, and the baseline policies trained on `loop_corridor`, on 20 episodes each of `loop_corridor`, of the training pool, and of a held-out pool of 16 tracks from seed 1000:
 
 ```
                                     laps out of 20
 policy                      loop_corridor   training pool   held-out pool
 loop_corridor, seed 0                   0               0               0
-               seed 1                  20               1               0
-               seed 2                   0               0               0
-               seed 3                   0               0               0
-               seed 4                   0               0               0
-generated,     seed 0                   0               0               0
                seed 1                   0               0               0
-               seed 2                   0              20              20
+               seed 2                   0               0               0
+               seed 3                  18               0               0
+               seed 4                   0               0               0
+generated,     seed 0                  19              20              19
+               seed 1                  17              20              19
+               seed 2                  20              16              18
 ```
 
-The policy trained on generated tracks laps every track of the held-out pool, which it never saw, as reliably as those it trained on, but not `loop_corridor`. The policy trained on `loop_corridor`, which turns only left, laps 1 of 20 generated tracks, which also turn right. It is slower per step: 700 env steps per second on 4 cores, against 1,030 on `loop_corridor`.
+The policies trained on generated tracks lap in 18 or 19 of 20 episodes on the held-out pool, whose tracks they never saw, about as reliably as on those they trained on, and on `loop_corridor` too. The policy trained on `loop_corridor`, which turns only left, laps none of the generated tracks, which also turn right. It is slower per step: 700 env steps per second on 4 cores, against 1,030 on `loop_corridor`.
 
 ## Layout
 

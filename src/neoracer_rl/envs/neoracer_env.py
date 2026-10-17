@@ -186,14 +186,14 @@ class ObservationBounds:
     If the track, the spawn range or the car changes, measure the peaks again."""
 
     lidar_m: float = 50.0  # m
-    accel_m_s2: float = 1000.0  # m/s^2; the peak, in a crash, is ~330 m/s^2
-    gyro_rad_s: float = 100.0  # rad/s; the peak is ~6 rad/s
-    # rad; the peak is ~0.39 rad. MuJoCo's 0.45 rad joint limit is soft, so a
+    accel_m_s2: float = 1000.0  # m/s^2; the peak, in a crash, is ~290 m/s^2
+    gyro_rad_s: float = 100.0  # rad/s; the peak is ~7 rad/s
+    # rad; the peak is ~0.43 rad. MuJoCo's 0.45 rad joint limit is soft, so a
     # crash could push past it.
     steer_rad: float = 2.0
     # m/s; the same limit as test_top_speed_bounded in neoracer-mujoco's
-    # validation/test_conformance.py. The peak is ~3.7 m/s; the motor's free
-    # speed is 6 m/s.
+    # validation/test_conformance.py. The peak is ~3.5 m/s; the motor's free
+    # speed is 4.3 m/s.
     speed_m_s: float = 40.0
 
 
@@ -227,10 +227,10 @@ class NeoRacerEnvConfig:
     tracks: Tracks = LoopCorridor()
     control_hz: float = 30.0  # Hz
     # The fraction of the battery voltage that action[0] = 1 gives the drive
-    # motor, in (0, 1]. At the full voltage the car reaches about 4.35 m/s.
+    # motor, in (0, 1]. At the full voltage the car reaches about 3.5 m/s.
     # The corners of loop_corridor need less (a LiDAR centering controller at
     # a fixed throttle laps at 0.5 and hits the wall at 0.75), but PPO can learn
-    # to slow for them: training seed 1 laps at 1.0, and not at 0.5 or 0.3.
+    # to slow for them: training seed 3 of the README's baseline laps at 1.0.
     throttle_scale: float = 1.0
     max_episode_steps: int = 1800  # 60 s at 30 Hz
     obs_bounds: ObservationBounds = ObservationBounds()

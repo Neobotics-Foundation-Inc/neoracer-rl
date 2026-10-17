@@ -32,15 +32,15 @@ python -m examples.random_actions
 
 The car drives on `loop_corridor`, a closed corridor about 1 m wide, or on generated tracks (see `Tracks`). The goal is to complete one lap counterclockwise (seen from above) without touching a wall, rolling over or getting stuck. The agent sees only what the real car's sensors measure, and nothing from the simulator's internal state, so a policy trained here can in principle run on the car.
 
-Each step applies one action for 17 physics steps of 2 ms, so a step is 34 ms of simulated time. That is the closest whole number of physics steps to 1/30 s, the scan rate of the car's LiDAR.
+Each step applies one action for 12 physics steps of 1/360 s, so a step is 1/30 s of simulated time, the scan rate of the car's LiDAR.
 
 ### Action Space
 
-The action space is a `Box(-1, 1, (2,), float32)`. The env clips each value to [-1, 1] and multiplies it by the limit of its actuator. The throttle is also multiplied by `throttle_scale` (default 0.1), because most of the motor's range is too fast for this track: at the full limit the car passes 27 m/s, while a simple LiDAR controller laps at about 4 m/s.
+The action space is a `Box(-1, 1, (2,), float32)`. The env clips each value to [-1, 1] and multiplies it by the limit of its actuator. The throttle is also multiplied by `throttle_scale` (default 1.0, the full battery voltage). At the full voltage the car reaches about 4.35 m/s. That is too fast for the corners at a fixed throttle (a simple LiDAR controller laps at 0.5 but hits the wall at 0.75), but PPO can learn to slow down for them: training seed 1 of the baseline below laps with `throttle_scale` 1.0, and does not with 0.5 or 0.3.
 
 | Num | Action | Control Min | Control Max | Actuator (in neoracer.xml) | Type (Unit) |
 |---|---|---|---|---|---|
-| 0 | Throttle, + drives forward | -1 | 1 | `fl_motor`, `fr_motor`, `rl_motor`, `rr_motor` | torque on each wheel, up to 0.1 (N m) |
+| 0 | Throttle, + drives forward | -1 | 1 | `motor`, one DC motor driving all four wheels through open differentials | voltage, up to 7.4 (V) |
 | 1 | Steering, + turns left | -1 | 1 | `steer_servo` | steering angle, up to 0.4 (rad) |
 
 ### Observation Space
@@ -83,7 +83,7 @@ Nobody knows the real car's grip, mass or motor strength exactly. To train a pol
 |---|---|
 | `wheel_friction` | the friction of the wheel contacts, and so how much the wheels slip |
 | `chassis_mass` | the mass and inertia of the car body |
-| `motor_torque` | the torque that the motors give for an action |
+| `motor_torque` | the motor's torque at every speed, for an action |
 | `steer_stiffness` | the stiffness of the steering servo |
 
 ```python
@@ -114,7 +114,7 @@ On a generated track the car starts at the beginning of the centerline, facing a
 
 `NeoRacerBatch` draws the track of each row at each `respawn`, so one batch steps on many tracks. Every track has 192 boxes per wall, so all of them have the same sizes, as `CpuBatch` needs. MuJoCo Warp collides against the walls of the model it was made from, so `Warp()` steps one track per batch and refuses a pool.
 
-A generated track has hundreds of wall boxes, which the collision check and the eight LiDAR rays test at every physics step. Training on them is slower: on 4 cores, 64 rows step about 2,500 env steps per second on generated tracks against 7,500 on `loop_corridor`.
+A generated track has hundreds of wall boxes, which the collision check and the eight LiDAR rays test at every physics step. Training on them is slower: on 4 cores, 64 rows step about 2,000 env steps per second on generated tracks against 5,000 on `loop_corridor`.
 
 ### Episode End
 
@@ -148,7 +148,7 @@ obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 | `car_path` | **str** | neoracer-mujoco's `neoracer.xml` | Path to the car model |
 | `tracks` | **LoopCorridor \| GeneratedTracks** | `LoopCorridor()` | Where the car drives (see `Tracks`) |
 | `control_hz` | **float** | `30.0` | Target action rate, rounded to whole physics steps (see `Description`) |
-| `throttle_scale` | **float** | `0.1` | Fraction of the motor torque limit that `action[0] = 1` gives (see `Action Space`) |
+| `throttle_scale` | **float** | `1.0` | Fraction of the battery voltage that `action[0] = 1` gives the motor (see `Action Space`) |
 | `max_episode_steps` | **int** | `1800` | Steps before truncation (see `Episode End`) |
 | `spawn` | **SpawnRange** | `lateral_m=0.15, yaw_rad=0.15, resettle_steps=50` | Random start offsets (see `Starting State`) |
 | `termination` | **TerminationConfig** | `upright_rollover_cos=0.5, stuck_window_s=4.0, stuck_progress_rad=0.05` | Rollover and stuck thresholds (see `Episode End`) |
@@ -213,21 +213,21 @@ The thread count does not change the result: a seed gives the same run on 1 or 4
 
 ### Baseline
 
-We trained seeds 0 to 4 for 400k steps each, on a 4-core 2.8 GHz Xeon, where a run takes about 9 minutes at about 740 steps per second. Then we evaluated each policy with its mean action on 20 episodes, env seeds 10000 to 10019. The middle columns give the share of the training episodes that ended in a lap, in each block of 50k steps.
+We trained seeds 0 to 4 for 400k steps each, on a 4-core 2.8 GHz Xeon, where a run takes about 7 minutes at about 1,030 steps per second. Then we evaluated each policy with its mean action on 20 episodes, env seeds 10000 to 10019. The middle columns give the share of the training episodes that ended in a lap, in each block of 50k steps.
 
 ```
                  laps in training, by 50k steps of training     evaluation, 20 episodes
 seed  first lap   50k 100k 150k 200k 250k 300k 350k 400k     return   outcome
-0     -            0%   0%   0%   0%   0%   0%   0%   0%      -5.86   20 crash
-1     96k          0%   1%  90%  99%  98%  99%  99%  99%     +16.31   20 lap
-2     82k          0%  19%  93%  99%  96%  99%  99% 100%     +16.31   20 lap
-3     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.83   20 crash
-4     133k         0%   0%   7%  83% 100%  99%  99%  96%     +16.31   20 lap
-random actions                                                -5.00   18 stuck, 2 crash
+0     -            0%   0%   0%   0%   0%   0%   0%   0%      -4.05   13 crash, 7 stuck
+1     102k         0%   0%  95% 100%  96%  99%  98%  98%     +16.32   20 lap
+2     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.81   19 stuck, 1 crash
+3     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.87   12 stuck, 8 crash
+4     -            0%   0%   0%   0%   0%   0%   0%   0%      -3.99   17 stuck, 3 crash
+random actions                                                -4.99   18 stuck, 2 crash
 zero action                                                   -5.00   20 stuck
 ```
 
-Three of the five seeds learn to lap. Once a seed finds the lap, almost every episode is one: about 243 steps (8.3 s) without touching a wall, for a return of about 16.3. The other two seeds fail in different ways. Seed 0 learns to back away from the first corner and creep until it hits the wall. Seed 3 learns to drive forward, but too slowly: its training episodes run out of time at about 0.84 laps, and its mean action hits the wall a fifth of the way around. So compare changes over several seeds, not one.
+One of the five seeds learns to lap. Once it finds the lap, almost every episode is one: about 177 steps (5.9 s) without touching a wall, for a return of about 16.3. The other four seeds learn the same thing: they creep for about 650 steps (22 s) to the first corner, 15% to 19% of the lap, and stop there or touch its wall. So compare changes over several seeds, not one.
 
 The initial action noise is large (standard deviation 1.0) on purpose; the comment on `init_log_std` in `PPOParams` says why.
 
@@ -240,21 +240,21 @@ We trained seeds 0 to 4 for 400k steps with them, as for the baseline, and evalu
 ```
                        trained on the XML     trained with random physics
                        seed 0  1  2  3  4     seed 0  1  2  3  4
-wheel_friction  0.3         0  0  0  0  0          0  0  0  0  0
-                0.5         0  0  0  0  0          2  0  0  0  0
-                0.75        0  0  0  0  5          9  0  0 10  0
-                1.0         0 10 10  0 10          7  0  0 10  0
-                1.2         0 10 10  0 10          4  0  0 10  0
-chassis_mass    0.7         0 10 10  0 10          6  0  0 10  0
-                1.5         0 10 10  0 10          9  0  0 10  0
-motor_torque    0.5         0 10 10  8 10         10  0  0 10  0
-                0.75        0 10 10  0 10         10  0  0 10  0
-                1.5         0  0  0  0  0          0  0  0 10  0
-steer_stiffness 0.5         0 10 10  4 10         10  0  0 10  0
-                2.0         0 10  9  9 10         10  0  0 10  0
+wheel_friction  0.3         0  0  0  0  0          0  0  0  5  0
+                0.5         0  0  0  0  0          0  0  0  7  0
+                0.75        0 10  0  0  0          0  0  0  6  0
+                1.0         0 10  0  0  0          0  0  0 10  0
+                1.2         0 10  0  0  0          0  0  0  7  0
+chassis_mass    0.7         0 10  0  0  0          0  0  0  9  0
+                1.5         0 10  0  0  0          0  0  0  7  0
+motor_torque    0.5         0 10  0  0  0          0  0  0  7  0
+                0.75        0 10  0  0  0          0  0  0  8  0
+                1.5         0 10  0  0  0          0  0  0  8  0
+steer_stiffness 0.5         0 10  0  0  0          0  0  0  7  0
+                2.0         0 10  0  0  0          0  0  0  7  0
 ```
 
-The policies trained on the XML lap only near the physics they trained on: they lose the corner as soon as the wheels have less grip, and they all crash with 50% more motor torque, which drives the car too fast for the corners. Random physics makes learning harder, as two of the five seeds learned to lap instead of three, but seed 3 then laps on every change but the two lowest frictions, and seed 0 laps on more of the low-friction settings than any policy trained on the XML. The run time is about the same: on 4 cores, 960 env steps per second with random physics against 990 without.
+The one policy trained on the XML that laps keeps lapping under every change but the two lowest frictions, where the wheels lose the corner. With random physics one seed of five learned to lap, seed 3, from 225k steps on. It laps on every change, 5 of 10 times even with 0.3 of the grip, but less reliably than the policy trained on the XML laps near the XML's physics. The run time is about the same: on 4 cores, 980 env steps per second with random physics against 1,030 without.
 
 ### Training on generated tracks
 
@@ -265,22 +265,22 @@ python -m examples.train_ppo --tracks generated --total-steps 400000 --seed 0 --
 python -m examples.train_ppo --eval gen.npz --tracks generated --first-track-seed 1000 --episodes 20
 ```
 
-We trained seeds 0 to 2 for 400k steps on the 16 tracks of difficulty 1 from seed 0. All three learned to lap, the first laps after 74k to 92k steps, and from 300k steps on 86% to 99% of the training episodes were laps. Then we evaluated each policy, and the baseline policies trained on `loop_corridor`, on 20 episodes each of `loop_corridor`, of the training pool, and of a held-out pool of 16 tracks from seed 1000:
+We trained seeds 0 to 2 for 400k steps on the 16 tracks of difficulty 1 from seed 0. Seed 2 learned to lap: its first lap came after 219k steps, and in the last 50k steps 98% of the training episodes were laps. Seed 1 reached about 60% of a lap by the end, and seed 0 learned to drive backward. Then we evaluated each policy, and the baseline policies trained on `loop_corridor`, on 20 episodes each of `loop_corridor`, of the training pool, and of a held-out pool of 16 tracks from seed 1000:
 
 ```
                                     laps out of 20
 policy                      loop_corridor   training pool   held-out pool
 loop_corridor, seed 0                   0               0               0
-               seed 1                  20               3               1
-               seed 2                  20               0               2
+               seed 1                  20               1               0
+               seed 2                   0               0               0
                seed 3                   0               0               0
-               seed 4                  20               1               0
-generated,     seed 0                  20               7              10
-               seed 1                  19              14              10
-               seed 2                  20              20              20
+               seed 4                   0               0               0
+generated,     seed 0                   0               0               0
+               seed 1                   0               0               0
+               seed 2                   0              20              20
 ```
 
-A policy trained on generated tracks laps tracks that it never saw about as often as those it trained on, and also laps `loop_corridor`, which it never saw either. A policy trained on `loop_corridor`, which turns only left, laps at most 3 of 20 generated tracks, which also turn right. Seed 2 laps every track; seeds 0 and 1 lap about half the generated ones. Training on the pool also failed less often: three seeds out of three learned to lap, against three out of five on `loop_corridor`. It is slower per step: 740 env steps per second on 4 cores, against 990 on `loop_corridor`.
+The policy trained on generated tracks laps every track of the held-out pool, which it never saw, as reliably as those it trained on, but not `loop_corridor`. The policy trained on `loop_corridor`, which turns only left, laps 1 of 20 generated tracks, which also turn right. It is slower per step: 700 env steps per second on 4 cores, against 1,030 on `loop_corridor`.
 
 ## Layout
 

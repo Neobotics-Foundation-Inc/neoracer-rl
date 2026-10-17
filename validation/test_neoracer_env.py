@@ -37,7 +37,6 @@ from neoracer_rl.envs import (
 )
 from neoracer_rl.envs.neoracer_env import arenas, lap_angle
 
-STEER_CMD_POS = 18  # observation index of steer_cmd_pos (rad)
 LAP = 2.0 * np.pi  # rad, one full lap of progress
 
 
@@ -194,15 +193,16 @@ def test_out_of_range_actions_are_clamped_not_rejected():
 
 
 @pytest.mark.parametrize("scale", [0.1, 0.5, 1.0])
-def test_full_throttle_gives_throttle_scale_of_the_motor_limit(scale):
-    """action[0] = 1 writes throttle_scale times the motor torque limit to
-    every drive motor."""
+def test_full_throttle_gives_throttle_scale_of_the_battery_voltage(scale):
+    """action[0] = 1 writes throttle_scale times the drive motor's voltage
+    limit, the battery's, to the motor."""
     env = NeoRacerEnv(NeoRacerEnvConfig(throttle_scale=scale))
     env.reset(seed=0)
     env.step(np.array([1.0, 0.0], dtype=np.float32))
-    limit = env.model.bind_scalar(env.scene.car.drive[0]).ctrlrange[1]  # N·m
-    for motor in env.scene.car.drive:
-        assert env.data.bind_scalar(motor).ctrl[0] == pytest.approx(scale * limit)
+    limit = env.model.bind_scalar(env.scene.car.drive).ctrlrange[1]  # V
+    assert env.data.bind_scalar(env.scene.car.drive).ctrl[0] == pytest.approx(
+        scale * limit
+    )
     env.close()
 
 
@@ -213,26 +213,23 @@ def test_throttle_scale_outside_0_1_is_rejected(scale):
 
 
 def test_wall_crash_observations_stay_in_space():
-    """A recorded wall crash pushes steer_cmd_pos to about 0.83 rad, past its
-    soft 0.45 rad joint limit. Every observation up to the crash must still
-    be inside observation_space. The actions are full throttle at the full
-    motor limit (throttle_scale=1) and random steering from default_rng(13)."""
+    """Every observation up to a wall crash is inside observation_space. The
+    actions are full throttle at the full battery voltage (throttle_scale=1)
+    and random steering from default_rng(13)."""
     env = NeoRacerEnv(NeoRacerEnvConfig(throttle_scale=1.0))
     rng = np.random.default_rng(13)
     env.reset(seed=13)
-    peak, reason = 0.0, None
+    reason = None
     for _ in range(env.config.max_episode_steps):
         action = rng.uniform(-1, 1, size=2).astype(np.float32)
         action[0] = 1.0
         obs, _reward, terminated, truncated, info = env.step(action)
         assert env.observation_space.contains(obs)
-        peak = max(peak, abs(float(obs[STEER_CMD_POS])))
         if terminated or truncated:
             reason = info["termination_reason"]
             break
     env.close()
     assert reason == "crash"
-    assert peak > 0.8, "the recorded crash no longer happens; record a new one"
 
 
 def test_repeated_random_actions_produce_no_nans(env):

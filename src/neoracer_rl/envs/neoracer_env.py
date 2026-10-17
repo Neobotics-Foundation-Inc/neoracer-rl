@@ -18,7 +18,7 @@ Action space -- Box([-1,-1],[1,1]), float32:
     action[0] = normalized throttle, + = forward
     action[1] = normalized steer,    + = LEFT
 
-    The signs are the ones in contract.py: + torque = forward, + steer = left.
+    The signs are the ones in contract.py: + throttle = forward, + steer = left.
     racecar_core uses + angle = right, so this env does not use
     racecar_core_adapter.MujocoDrive, which negates the steer. step() clamps
     the action and scales it by the actuator limits of the compiled model
@@ -180,19 +180,20 @@ class TerminationConfig:
 @dataclass(frozen=True)
 class ObservationBounds:
     """Bounds of the observation space, with a margin over the peaks in 160
-    episodes on loop_corridor.xml at full throttle at the full motor limit
-    (throttle_scale=1) with random steering, each run to its end (most end in
+    episodes on loop_corridor.xml at full throttle at the full battery voltage
+    (throttle_scale=1) with random steering, each run to its end (all end in
     a wall crash), with the elliptic friction cone and impratio=10.
     If the track, the spawn range or the car changes, measure the peaks again."""
 
     lidar_m: float = 50.0  # m
-    accel_m_s2: float = 1000.0  # m/s^2; the peak, in a crash, is ~590 m/s^2
-    gyro_rad_s: float = 100.0  # rad/s; the peak is ~14 rad/s
-    # rad; the peak is ~0.83 rad. MuJoCo's 0.45 rad joint limit is soft, so a
-    # crash can push past it.
+    accel_m_s2: float = 1000.0  # m/s^2; the peak, in a crash, is ~330 m/s^2
+    gyro_rad_s: float = 100.0  # rad/s; the peak is ~6 rad/s
+    # rad; the peak is ~0.39 rad. MuJoCo's 0.45 rad joint limit is soft, so a
+    # crash could push past it.
     steer_rad: float = 2.0
     # m/s; the same limit as test_top_speed_bounded in neoracer-mujoco's
-    # validation/test_conformance.py. The car passes 27 m/s on a long straight.
+    # validation/test_conformance.py. The peak is ~3.7 m/s; the motor's free
+    # speed is 6 m/s.
     speed_m_s: float = 40.0
 
 
@@ -225,11 +226,12 @@ class NeoRacerEnvConfig:
     car_path: str = assets.DEFAULT_CAR
     tracks: Tracks = LoopCorridor()
     control_hz: float = 30.0  # Hz
-    # The fraction of the motor torque limit that action[0] = 1 gives, in
-    # (0, 1]. At the full limit the car passes 27 m/s, and loop_corridor needs
-    # a few m/s: a LiDAR centering controller laps at 0.1 of the limit
-    # (about 4 m/s) and hits the wall at 0.2 (about 5.7 m/s).
-    throttle_scale: float = 0.1
+    # The fraction of the battery voltage that action[0] = 1 gives the drive
+    # motor, in (0, 1]. At the full voltage the car reaches about 4.35 m/s.
+    # The corners of loop_corridor need less (a LiDAR centering controller at
+    # a fixed throttle laps at 0.5 and hits the wall at 0.75), but PPO can learn
+    # to slow for them: training seed 1 laps at 1.0, and not at 0.5 or 0.3.
+    throttle_scale: float = 1.0
     max_episode_steps: int = 1800  # 60 s at 30 Hz
     obs_bounds: ObservationBounds = ObservationBounds()
     spawn: SpawnRange = SpawnRange()
@@ -524,7 +526,6 @@ class NeoRacerEnv(gym.Env):
         )
 
         self._limits = contract.actuator_limits(self.model, self._car)
-        self._max_torque = config.throttle_scale * self._limits.torque_nm  # N·m
 
         self.action_space = spaces.Box(
             low=_ACTION_LOW, high=_ACTION_HIGH, dtype=np.float32
@@ -605,7 +606,7 @@ class NeoRacerEnv(gym.Env):
             self._car,
             self.data,
             ControlCommand(
-                throttle=float(action[0]) * self._max_torque,
+                throttle=float(action[0]) * self.config.throttle_scale,
                 steer=float(action[1]) * self._limits.steer_rad,
             ),
         )

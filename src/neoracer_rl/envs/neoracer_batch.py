@@ -223,7 +223,6 @@ class NeoRacerBatch:
                 assert_never(backend)
         self._nstep = substeps_per_action(config, model)
         limits = contract.actuator_limits(model, self.scene.car)
-        self._max_torque = config.throttle_scale * limits.torque_nm  # N·m
         self._max_steer = limits.steer_rad  # rad
         self._window_len = stuck_window_len(config)
         # The car at rest on the ground of each track, before the offset.
@@ -305,7 +304,7 @@ class NeoRacerBatch:
         ctrl = batch.command(
             model,
             car,
-            action[:, 0].astype(np.float64) * self._max_torque,
+            action[:, 0].astype(np.float64) * cfg.throttle_scale,
             action[:, 1].astype(np.float64) * self._max_steer,
         )
         physics, sensordata = self._sim.step(state.sim, ctrl, self._nstep)

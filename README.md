@@ -280,7 +280,7 @@ generated,     seed 0                  19              20              19
                seed 2                  20              16              18
 ```
 
-The policies trained on generated tracks lap 18 or 19 of the 20 held-out tracks, which they never saw, about as reliably as those they trained on, and `loop_corridor` too. The policy trained on `loop_corridor`, which turns only left, laps none of the generated tracks, which also turn right. It is slower per step: 700 env steps per second on 4 cores, against 1,030 on `loop_corridor`.
+The policies trained on generated tracks lap in 18 or 19 of 20 episodes on the held-out pool, whose tracks they never saw, about as reliably as on those they trained on, and on `loop_corridor` too. The policy trained on `loop_corridor`, which turns only left, laps none of the generated tracks, which also turn right. It is slower per step: 700 env steps per second on 4 cores, against 1,030 on `loop_corridor`.
 
 ## Layout
 

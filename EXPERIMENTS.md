@@ -1,6 +1,6 @@
 # Experiments
 
-PPO on the NeoRacer environment, with neoracer-mujoco 0.11.0. Each run trains for 400k steps on 8 rows of a `NeoRacerBatch` on the CPU, on a 4-core 2.8 GHz Xeon, where a run takes 7 to 13 minutes. Each policy is then evaluated with its mean action, on env seeds from 10000. A seed gives the same run on 1 or 4 threads.
+PPO on the NeoRacer environment, with neoracer-mujoco 0.11.0. The pin is now 0.11.2, whose steering has more inertia so the car no longer shimmies in part-throttle turns; these runs have not been repeated on it. Each run trains for 400k steps on 8 rows of a `NeoRacerBatch` on the CPU, on a 4-core 2.8 GHz Xeon, where a run takes 7 to 13 minutes. Each policy is then evaluated with its mean action, on env seeds from 10000. A seed gives the same run on 1 or 4 threads.
 
 ```sh
 python -m examples.train_ppo --total-steps 400000 --seed 0 --out ppo.npz

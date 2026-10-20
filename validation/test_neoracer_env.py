@@ -10,7 +10,9 @@ many random inputs. Two env tests then check that step() uses them.
 
 import os
 import pickle
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 import mujoco
 import numpy as np
@@ -324,7 +326,7 @@ def test_reward_adds_the_terminal_term():
     """Without a termination, the reward is progress_weight * delta. A
     termination adds lap_bonus or subtracts its penalty."""
     cfg = RewardConfig()
-    terminal: frozendict[TerminationReason, float] = frozendict(
+    terminal: Mapping[TerminationReason, float] = MappingProxyType(
         {
             "lap_complete": cfg.lap_bonus,
             "rollover": -cfg.rollover_penalty,

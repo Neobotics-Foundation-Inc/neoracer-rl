@@ -1,6 +1,6 @@
 # NeoRacer RL
 
-[neoracer-mujoco](https://github.com/Neobotics-Foundation-Inc/neoracer-mujoco) simulates the NeoRacer RC car: you put the car on a track and step it in your own loop. Learning to drive by reinforcement learning needs more than a step loop. A policy needs three things:
+[neoracer-mujoco](https://github.com/Neobotics-Foundation-Inc/neoracer-mujoco) simulates the NeoRacer, a 1/12-scale autonomous racing car: you put the car on a track and step it in your own loop. Learning to drive by reinforcement learning needs more than a step loop. A policy needs three things:
 - a fixed list of what it observes;
 - a reward for getting somewhere;
 - a rule for when an episode is over.

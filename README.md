@@ -63,9 +63,9 @@ The reward is a pure function of the step's progress and the reason the episode 
 ```python
 from neoracer_rl.envs import RewardConfig, reward
 
-reward(RewardConfig(), 0.1, None)            # 0.1
+reward(RewardConfig(), 0.1, None)  # 0.1
 reward(RewardConfig(), 0.1, "lap_complete")  # 10.1
-reward(RewardConfig(), 0.0, "crash")         # -5.0
+reward(RewardConfig(), 0.0, "crash")  # -5.0
 ```
 
 The reason is a `TerminationReason`, `Literal["rollover", "crash", "stuck", "lap_complete"]`, so the type checker sees every case. Progress works the same way. `advance` takes the last `Progress` and the car's new angle and returns the next `Progress`, and `termination` returns the reason or `None`. Nobody has tuned the weights yet.
@@ -92,7 +92,7 @@ Progress has to mean the same on both kinds of track. The env keeps each compile
 ```python
 @dataclass(frozen=True)
 class Arena:
-    scene: Scene                  # the car on the track, compiled
+    scene: Scene  # the car on the track, compiled
     layout: LoopCorridor | Track  # what progress is measured on
 ```
 

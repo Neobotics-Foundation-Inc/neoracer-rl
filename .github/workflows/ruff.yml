@@ -23,7 +23,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
-        run: pip install ruff==0.17.0
+        run: pip install ruff==0.17.1
 
       - name: Ruff (lint)
         run: ruff check --output-format=github .

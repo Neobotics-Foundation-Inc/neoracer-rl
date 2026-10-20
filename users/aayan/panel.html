@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en" data-palette="#3987e5,#d95926,#199e70,#c98500,#d55181,#008300,#9085e9,#e66767">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NeoRacer Panel</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#121211; --surface-1:#1a1a19; --surface-2:#222221; --line:#32322f;
+    --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8a8a80;
+    /* Categorical slots in fixed order. All eight validate against this
+       surface for adjacent pairs (worst CVD ΔE 8.4, normal-vision 19.3), which
+       is the pairlist that applies to lines. Never cycle past slot 8 --
+       MAX_SERIES caps the plot instead. */
+    --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70;
+    --series-4:#c98500; --series-5:#d55181; --series-6:#008300;
+    --series-7:#9085e9; --series-8:#e66767;
+    --good:#199e70; --warn:#c98500; --bad:#e66767;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text-primary);
+    font:15px/1.55 ui-sans-serif,-apple-system,"SF Pro Text",Segoe UI,Roboto,sans-serif;
+  }
+  header{
+    padding:20px 16px 12px; border-bottom:1px solid var(--line);
+    position:sticky; top:0; background:var(--bg); z-index:10;
+  }
+  h1{margin:0 0 4px; font-size:19px; letter-spacing:-.01em}
+  .sub{color:var(--text-muted); font-size:13px}
+  nav{display:flex; gap:4px; margin-top:12px; flex-wrap:wrap}
+  nav button{
+    background:none; border:1px solid transparent; color:var(--text-secondary);
+    padding:6px 13px; border-radius:99px; cursor:pointer; font-size:14px;
+  }
+  nav button[aria-selected="true"]{background:var(--surface-2); color:var(--text-primary); border-color:var(--line)}
+  main{padding:16px; max-width:1180px; margin:0 auto}
+  section[hidden]{display:none}
+  .card{
+    background:var(--surface-1); border:1px solid var(--line);
+    border-radius:var(--radius); padding:16px; margin-bottom:16px;
+    min-width:0;   /* see the canvas rule — let grid/flex items shrink */
+  }
+  .card h2{margin:0 0 4px; font-size:15px; font-weight:650}
+  .card p.note{margin:0 0 14px; color:var(--text-muted); font-size:13px}
+  .row{display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end}
+  .row>div{min-width:0}
+  .row input,.row select{max-width:100%}
+  label{display:block; font-size:12px; color:var(--text-muted); margin-bottom:4px}
+  select,input[type=number],input[type=range]{
+    background:var(--surface-2); color:var(--text-primary);
+    border:1px solid var(--line); border-radius:7px; padding:7px 9px; font-size:14px;
+  }
+  input[type=range]{padding:0; width:150px}
+  button.action{
+    background:var(--series-1); color:#fff; border:none; border-radius:7px;
+    padding:8px 15px; font-size:14px; font-weight:600; cursor:pointer;
+  }
+  button.action.ghost{background:var(--surface-2); color:var(--text-primary); border:1px solid var(--line)}
+  button.action:disabled{opacity:.45; cursor:not-allowed}
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(236px,1fr)); gap:12px}
+  .tile{background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden}
+  .tile img{width:100%; display:block; aspect-ratio:4/3; object-fit:cover; background:#0c0c0b}
+  .tile .body{padding:9px 11px 11px}
+  .tile .name{font-size:14px; font-weight:600}
+  .tile .meta{font-size:12px; color:var(--text-muted); margin-bottom:8px}
+  /* Height is set per-canvas from data-h by sizeCanvas(). Never let layout
+     height come from the height ATTRIBUTE: the 2D context writes that
+     attribute, so reading it back to recompute size feeds back on itself. */
+  /* max-width is belt-and-braces: the backing store is W*dpr px wide and that is
+     the canvas's intrinsic width, so a grid/flex item holding one could refuse
+     to shrink below it (items default to min-width:auto). Measured at 375/805/
+     1440px the layout does not actually overflow -- this and the min-width:0
+     rules below just make that structural rather than incidental. */
+  canvas{width:100%; max-width:100%; display:block}
+  .scroll-x{overflow-x:auto}
+  table{border-collapse:collapse; width:100%; font-size:14px}
+  th,td{text-align:right; padding:7px 9px; border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--text-muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.04em}
+  .swatch{display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:7px; vertical-align:middle}
+  .legend{display:flex; gap:14px; flex-wrap:wrap; font-size:13px; color:var(--text-secondary); margin:4px 0 10px}
+  .pill{font-size:11px; padding:2px 8px; border-radius:99px; background:var(--surface-2); color:var(--text-secondary); border:1px solid var(--line)}
+  .status{font-size:13px; color:var(--text-secondary); min-height:20px}
+  .err{color:var(--bad); font-size:12px; white-space:pre-wrap; font-family:ui-monospace,Menlo,monospace}
+  .kv{display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:13px}
+  .kv dt{color:var(--text-muted)}
+  .kv dd{margin:0}
+  video{width:100%; border-radius:8px; background:#000; margin-top:10px}
+  /* align-items:start, or the grid stretches both cards to the taller one's
+     height and the shorter card trails a large empty area. */
+  .two{display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start}
+  .two>*{min-width:0}
+  @media(max-width:860px){.two{grid-template-columns:1fr}}
+  details{border-top:1px solid var(--line); padding-top:11px; margin-top:11px}
+  summary{cursor:pointer; font-weight:600; font-size:14px}
+  details p{color:var(--text-secondary); font-size:14px}
+  code{background:var(--surface-2); padding:1px 5px; border-radius:4px; font-size:13px}
+  code.cmd{display:block; padding:9px 11px; font-family:ui-monospace,Menlo,monospace;
+           user-select:all; overflow-x:auto; white-space:pre; line-height:1.5}
+</style>
+</head>
+<body>
+<header>
+  <h1>NeoRacer panel</h1>
+  <div class="sub">Sutton &amp; Barto chapters 4–6, driving a 1/12-scale car in MuJoCo.</div>
+  <nav id="tabs">
+    <button aria-selected="true" data-tab="tracks">Tracks</button>
+    <button data-tab="train">Train</button>
+    <button data-tab="runs">Runs</button>
+    <button data-tab="notes">Notes</button>
+  </nav>
+</header>
+
+<main>
+<!-- ───────────────────────── TRACKS ───────────────────────── -->
+<section id="tab-tracks">
+  <div class="card">
+    <h2>Generate a track</h2>
+    <p class="note">Procedural loops from the simulator's track generator. The seed makes
+      one reproducible, so the same seed gives the same track every time.</p>
+    <div class="row">
+      <div><label for="gseed">Seed</label><input type="number" id="gseed" value="7" min="0" max="99999" style="width:96px"></div>
+      <div><label for="gdiff">Difficulty <span id="gdiffv" class="pill">1</span></label><input type="range" id="gdiff" min="0" max="3" value="1"></div>
+      <button class="action ghost" id="gshow">Preview</button>
+      <button class="action" id="gdrive">Save XML to drive it</button>
+      <button class="action ghost" id="grandom">Random seed</button>
+    </div>
+    <div class="status" id="gstatus"></div>
+    <div id="drivecmd" style="margin-top:8px"></div>
+    <div id="gpreview" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card">
+    <h2>Built-in tracks</h2>
+    <p class="note">Save any of these as an XML file, then drive it with the simulator's manual_drive script.</p>
+    <div class="grid" id="trackgrid"></div>
+  </div>
+</section>
+
+<!-- ───────────────────────── TRAIN ───────────────────────── -->
+<section id="tab-train" hidden>
+  <div class="card">
+    <h2>Train an agent</h2>
+    <p class="note">Training always runs on <code>loop_corridor</code> — the environment
+      rejects every other track, because its lap and progress logic is built around
+      that one ring's geometry. Generated tracks are for driving, not training.</p>
+    <div class="row">
+      <div><label for="method">Method</label><select id="method"></select></div>
+      <div><label for="episodes">Episodes</label><input type="number" id="episodes" value="400" min="1" max="5000" style="width:100px"></div>
+      <div><label for="seed">Seed</label><input type="number" id="seed" value="0" style="width:80px"></div>
+      <div><label for="alpha">Step size α</label><input type="number" id="alpha" value="0.1" step="0.01" style="width:90px"></div>
+      <div><label for="eps">Start ε</label><input type="number" id="eps" value="0.3" step="0.05" style="width:90px"></div>
+      <button class="action" id="start">Start</button>
+      <button class="action ghost" id="stop" disabled>Stop</button>
+    </div>
+    <div class="status" id="tstatus" style="margin-top:10px"></div>
+    <div class="err" id="terror"></div>
+  </div>
+
+  <div class="two">
+    <div class="card">
+      <h2>Learning curve</h2>
+      <p class="note">Lap fraction per episode. 1.0 is a completed lap.</p>
+      <canvas id="livelap" height="210"></canvas>
+      <h2 style="margin-top:16px">Return</h2>
+      <p class="note">Scored with whichever reward it is training on.</p>
+      <canvas id="liveret" height="180"></canvas>
+    </div>
+    <div class="card">
+      <h2>Where it just drove</h2>
+      <p class="note">The car's path through the episode that finished most recently.</p>
+      <canvas id="livepath" height="330"></canvas>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── RUNS ───────────────────────── -->
+<section id="tab-runs" hidden>
+  <div class="card">
+    <h2>Compare runs</h2>
+    <p class="note">Every saved table. Tick any to overlay their learning curves.</p>
+    <div class="legend" id="runlegend"></div>
+    <canvas id="cmplap" height="230"></canvas>
+    <div class="scroll-x"><table id="runtable" style="margin-top:14px">
+      <thead><tr><th>Run</th><th>Episodes</th><th>Best lap</th><th>Final 50 avg</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div class="status" id="rstatus" style="margin-top:10px"></div>
+  </div>
+  <div class="card" id="videocard" hidden>
+    <h2 id="videotitle">Video</h2>
+    <video id="player" controls loop></video>
+  </div>
+</section>
+
+<!-- ───────────────────────── NOTES ───────────────────────── -->
+<section id="tab-notes" hidden>
+  <div class="card">
+    <h2>The five methods</h2>
+    <dl class="kv" id="methodnotes"></dl>
+  </div>
+  <div class="card">
+    <h2>How a continuous problem became a table</h2>
+    <p class="note" id="discnote"></p>
+    <details open><summary>The three state features</summary>
+      <p><b>lateral</b> — left beam minus right beam. Am I off-centre?<br>
+         <b>skew</b> — rear-side minus front-side beam, left minus right. Am I pointed
+         <i>along</i> the wall or <i>into</i> it?<br>
+         <b>forward</b> — distance to the wall ahead. Is a corner coming?</p>
+      <p>Without <b>skew</b> the state cannot tell running parallel to a wall from
+         driving into it, and an agent scores below a random policy. It roughly doubles
+         lap fraction.</p>
+    </details>
+    <details><summary>Two things that mattered more than any algorithm</summary>
+      <p><b>Torque.</b> The drive motors take <code>ctrlrange="-1 1"</code> in N·m and
+         0.35 is enough to flip the car at speed. An action grid reaching 1.0 only teaches
+         a policy to drive into the nearest wall, so the three settings here stay in the
+         cruising range: 0.05, 0.10 and 0.18.</p>
+      <p><b>Wall contact ends the episode.</b> It used to cost a penalty for every
+         step the car spent scraping, which made standing still the best policy and
+         needed the reward rebalanced before anything would learn. The environment now
+         ends the episode on contact with a one-time crash penalty equal to the stuck
+         penalty, so an episode that makes progress and then crashes already returns
+         more than one that never moves. Every method here trains on the environment's
+         own reward.</p>
+    </details>
+    <details><summary>Why generated tracks cannot be trained on</summary>
+      <p>The environment raises a <code>ValueError</code> for any track but
+         <code>loop_corridor.xml</code>. Its reward, lap detection and spawn logic are all
+         written around that ring's geometry — progress is measured as angle swept about the
+         ring's centre, which means nothing on a free-form loop. Driving a generated track
+         works fine; training on one needs a progress metric that follows a centreline.</p>
+    </details>
+  </div>
+</section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const SERIES = ['--series-1','--series-2','--series-3','--series-4',
+                '--series-5','--series-6','--series-7','--series-8'];
+const MAX_SERIES = SERIES.length;   // never cycle hues; cap the plot instead
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const colourFor = i => css(SERIES[Math.min(i, SERIES.length - 1)]);
+
+const METHOD_NOTES = {
+  dp:        ['ch 4.4', 'Value iteration — but on an MDP <i>estimated</i> from random rollouts, since the car\'s real dynamics are never handed to us. Finishes last here: the estimate is sharpest where it matters least.'],
+  mc:        ['ch 5.4', 'First-visit Monte Carlo control. No bootstrapping — wait for the episode to end, then credit each first visit with the return that actually followed.'],
+  sarsa:     ['ch 6.4', 'On-policy TD control. Learns the value of the path it actually drives, exploration included, so it keeps a margin from the walls. Best method here.'],
+  qlearning: ['ch 6.5', 'Off-policy TD control. Learns the value of the <i>greedy</i> path, which here hugs the walls — so it wedges itself in corners. Sarsa beating it is Example 6.6, the cliff, in a simulator.'],
+  esarsa:    ['ch 6.6', 'Expected Sarsa. Same as Sarsa but backs up the expectation over the ε-greedy policy instead of the single sampled action, which removes that sampling variance.'],
+};
+
+/* ---------- canvas sizing ----------
+   Size a canvas for a HiDPI screen, idempotently.
+
+   The trap this avoids: `canvas { width:100% }` sets no CSS height, so the
+   element's layout height falls back to the height ATTRIBUTE -- and assigning
+   cv.height writes that attribute. Reading it back on the next redraw and
+   multiplying by dpr again doubles the canvas every frame (210 -> 420 -> 840
+   -> ...). Within a few polls it exceeds the browser's maximum canvas area,
+   allocation fails, and the canvas renders as a broken-image placeholder.
+   That is why charts used to grow absurdly tall and then vanish mid-training.
+
+   So: the logical height is captured ONCE into data-h and read from there, the
+   CSS height is pinned explicitly, and dpr is capped at 2 (beyond that the
+   buffer quadruples for no visible gain). */
+function sizeCanvas(cv){
+  if(!cv.dataset.h) cv.dataset.h = cv.getAttribute('height') || '200';
+  const H = parseInt(cv.dataset.h);
+  const W = Math.max(1, Math.round(cv.clientWidth || cv.parentElement.clientWidth || 300));
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.style.height = H + 'px';
+  cv.width  = Math.round(W * dpr);
+  cv.height = Math.round(H * dpr);
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  return {g, W, H};
+}
+
+/* ---------- tiny canvas line chart (no libraries, works offline) ---------- */
+function lineChart(cv, series, opts={}){
+  const {g, W, H} = sizeCanvas(cv);
+  const pad = {l:44, r:12, t:10, b:26};
+  const plotW = W-pad.l-pad.r, plotH = H-pad.t-pad.b;
+
+  const all = series.flatMap(s => s.points);
+  if(!all.length){
+    g.fillStyle = css('--text-muted'); g.font='13px ui-sans-serif';
+    g.fillText(opts.empty || 'nothing yet', pad.l, H/2); return;
+  }
+  const maxX = Math.max(1, ...all.map(p=>p[0]));
+  let minY = Math.min(0, ...all.map(p=>p[1]));
+  let maxY = Math.max(...all.map(p=>p[1]));
+  if(opts.yMin!==undefined) minY = Math.min(minY, opts.yMin);
+  if(opts.yMax!==undefined) maxY = Math.max(maxY, opts.yMax);
+  if(maxY===minY) maxY = minY+1;
+  const X = x => pad.l + (x/maxX)*plotW;
+  const Y = y => pad.t + plotH - ((y-minY)/(maxY-minY))*plotH;
+
+  // recessive grid + axis labels
+  g.strokeStyle = css('--line'); g.lineWidth = 1;
+  g.fillStyle = css('--text-muted'); g.font = '11px ui-sans-serif';
+  for(let i=0;i<=4;i++){
+    const v = minY + (maxY-minY)*i/4, y = Y(v);
+    g.beginPath(); g.moveTo(pad.l,y); g.lineTo(W-pad.r,y); g.stroke();
+    g.textAlign='right'; g.fillText(v.toFixed(opts.dp ?? 2), pad.l-7, y+4);
+  }
+  g.textAlign='center';
+  g.fillText('0', pad.l, H-8);
+  g.fillText(String(maxX), W-pad.r, H-8);
+  g.fillText(opts.xLabel||'episode', pad.l+plotW/2, H-8);
+
+  series.forEach(s=>{
+    if(!s.points.length) return;
+    g.strokeStyle = s.colour; g.lineWidth = 2;
+    g.lineJoin='round'; g.lineCap='round';
+    g.beginPath();
+    s.points.forEach(([x,y],i)=> i?g.lineTo(X(x),Y(y)):g.moveTo(X(x),Y(y)));
+    g.stroke();
+  });
+
+  // With four or fewer lines, name them at their right-hand end as well as in
+  // the legend, so identity never rests on colour alone. Labels wear text ink,
+  // not the series colour; the dot beside each carries the identity.
+  const labelled = series.filter(s=>s.points.length && s.label);
+  if(labelled.length && labelled.length <= 4){
+    g.font = '11px ui-sans-serif'; g.textAlign = 'left';
+    const used = [];
+    labelled.forEach(s=>{
+      const [lx,ly] = s.points[s.points.length-1];
+      let y = Y(ly);
+      while(used.some(u=>Math.abs(u-y) < 12)) y += 12;   // nudge off collisions
+      used.push(y);
+      g.fillStyle = s.colour;
+      g.beginPath(); g.arc(X(lx)-6, y-3, 3, 0, 7); g.fill();
+      g.fillStyle = css('--text-secondary');
+      g.fillText(s.label, X(lx), y);
+    });
+  }
+}
+
+/* smooth a noisy per-episode series so the trend is visible */
+function smooth(vals, w){
+  const out=[]; let acc=0;
+  for(let i=0;i<vals.length;i++){
+    acc+=vals[i];
+    if(i>=w) acc-=vals[i-w];
+    out.push(acc/Math.min(i+1,w));
+  }
+  return out;
+}
+
+/* ---------- tabs ---------- */
+const TABS = ['tracks','train','runs','notes'];
+function showTab(name){
+  if(!TABS.includes(name)) name = 'tracks';
+  [...$('#tabs').children].forEach(x=>x.setAttribute('aria-selected', x.dataset.tab===name));
+  TABS.forEach(t=>{ $('#tab-'+t).hidden = (t !== name); });
+  if(location.hash.slice(1) !== name) history.replaceState(null,'','#'+name);
+  if(name==='runs') loadRuns();
+  if(name==='train') drawLive();
+}
+$('#tabs').addEventListener('click', e=>{
+  const b = e.target.closest('button[data-tab]'); if(!b) return;
+  showTab(b.dataset.tab);
+});
+addEventListener('hashchange', ()=> showTab(location.hash.slice(1)));
+
+/* ---------- init ---------- */
+let INIT = null;
+async function init(){
+  INIT = await (await fetch('/api/init')).json();
+  $('#method').innerHTML = INIT.methods.map(m=>`<option value="${m}">${m}</option>`).join('');
+  $('#method').value = 'sarsa';
+  $('#discnote').textContent =
+    `${INIT.states} states × ${INIT.actions} actions. Throttles ${INIT.throttles.join(' / ')} N·m, `
+    + `steering ${INIT.steers.join(' / ')} (normalised, + is left).`;
+  $('#methodnotes').innerHTML = INIT.methods.map((m,i)=>{
+    const [ch, text] = METHOD_NOTES[m] || ['',''];
+    return `<dt><span class="swatch" style="background:${colourFor(i)}"></span>${m}</dt>`
+         + `<dd><span class="pill">${ch}</span> ${text}</dd>`;
+  }).join('');
+  $('#trackgrid').innerHTML = INIT.tracks.map(t=>`
+    <div class="tile">
+      <img loading="lazy" src="/api/track.png?track=${encodeURIComponent(t)}" alt="${t}">
+      <div class="body"><div class="name">${t}</div>
+        <div class="meta">${t==='plane'?'no scenery':'built-in'}</div>
+        <button class="action ghost" data-drive="${t}">Save XML</button></div>
+    </div>`).join('');
+}
+
+document.addEventListener('click', async e=>{
+  const b = e.target.closest('[data-drive]'); if(!b) return;
+  b.disabled = true;
+  const r = await post('/api/track-xml', {track: b.dataset.drive});
+  showDriveCommand(r);
+  b.disabled = false;
+});
+
+async function post(url, body){
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                              body: JSON.stringify(body||{})});
+  return r.json();
+}
+
+/* ---------- generated tracks ---------- */
+$('#gdiff').addEventListener('input', e=> $('#gdiffv').textContent = e.target.value);
+function genName(){ return `gen:${$('#gseed').value}:${$('#gdiff').value}`; }
+$('#gshow').addEventListener('click', ()=>{
+  const t = genName();
+  $('#gstatus').textContent = 'rendering ' + t + ' …';
+  $('#gpreview').innerHTML =
+    `<img style="max-width:520px;width:100%;border-radius:10px;border:1px solid var(--line)"
+          src="/api/track.png?track=${encodeURIComponent(t)}" alt="${t}"
+          onload="document.querySelector('#gstatus').textContent='${t}'">`;
+});
+$('#grandom').addEventListener('click', ()=>{
+  $('#gseed').value = Math.floor(Math.random()*10000); $('#gshow').click();
+});
+$('#gdrive').addEventListener('click', async ()=>{
+  showDriveCommand(await post('/api/track-xml', {track: genName()}));
+});
+
+/* Driving by hand is the simulator's job: examples/manual_drive.py takes any
+   track XML with --track and owns a glfw window on the main thread, so it
+   cannot run inside this server. Write the XML, show the command. */
+function showDriveCommand(r){
+  const box = $('#drivecmd');
+  if(!r.ok){ box.innerHTML = '<span class="err">'+(r.error||'failed')+'</span>'; return; }
+  box.innerHTML =
+    '<div class="note" style="margin-bottom:6px">Saved. Drive it from the '
+    + 'neoracer-mujoco checkout with:</div>'
+    + '<code class="cmd">' + r.command.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</code>';
+}
+
+/* ---------- training ---------- */
+let CURVE = [], PATH = [], poll = null;
+
+/* A 400-episode run takes a couple of minutes, so a sub-second refresh buys
+   nothing but a flickering redraw and needless work. Poll every 2s while
+   training; the response is a delta (?since=) so a slower poll costs no data. */
+const POLL_MS = 2000;
+let PATH_SEEN = null;
+$('#start').addEventListener('click', async ()=>{
+  CURVE = []; PATH = []; $('#terror').textContent='';
+  const r = await post('/api/train', {
+    method: $('#method').value, episodes: +$('#episodes').value,
+    seed: +$('#seed').value, alpha: +$('#alpha').value, eps: +$('#eps').value,
+  });
+  if(!r.ok){ $('#tstatus').textContent = r.error; return; }
+  $('#start').disabled = true; $('#stop').disabled = false;
+  if(!poll) poll = setInterval(tick, POLL_MS);
+  tick();   // paint the first point immediately rather than after POLL_MS
+});
+$('#stop').addEventListener('click', ()=> post('/api/stop', {}));
+
+async function tick(){
+  const r = await (await fetch('/api/progress?since='+CURVE.length)).json();
+  CURVE = CURVE.concat(r.curve || []);
+  PATH = r.path || PATH;
+  const pct = r.episodes ? Math.round(100*r.total/r.episodes) : 0;
+  $('#tstatus').textContent =
+    (r.running ? `${r.method} — ${r.message} (${pct}%)` : (r.message || 'idle'));
+  // Drive the buttons from the SERVER's state, not from whether this page
+  // started the run. Opening the panel mid-run used to show Start enabled and
+  // Stop greyed out, and never began polling.
+  $('#start').disabled = r.running;
+  $('#stop').disabled  = !r.running;
+  if(r.running && !poll) poll = setInterval(tick, POLL_MS);
+  if(r.error) $('#terror').textContent = r.error;
+  // Only repaint when new episodes arrived (or the path moved). An unchanged
+  // poll result should not cause a redraw -- that was half the flicker.
+  if((r.curve && r.curve.length) || r.path !== PATH_SEEN){ PATH_SEEN = r.path; drawLive(); }
+  if(!r.running && poll){
+    clearInterval(poll); poll = null;
+    if(r.finished) loadRuns();
+  }
+}
+
+function drawLive(){
+  const colour = colourFor(INIT ? INIT.methods.indexOf($('#method').value) : 0);
+  const laps = smooth(CURVE.map(c=>c.lap), 20);
+  const rets = smooth(CURVE.map(c=>c.ret), 20);
+  lineChart($('#livelap'), [{colour, points: laps.map((v,i)=>[i,v])}],
+            {yMin:0, yMax:1, dp:2, empty:'press Start'});
+  lineChart($('#liveret'), [{colour, points: rets.map((v,i)=>[i,v])}],
+            {dp:1, empty:'press Start'});
+  drawPath();
+}
+
+function drawPath(){
+  const cv = $('#livepath');
+  const {g, W, H} = sizeCanvas(cv);
+  if(PATH.length < 2){
+    g.fillStyle=css('--text-muted'); g.font='13px ui-sans-serif';
+    g.fillText('no episode yet', 12, H/2); return;
+  }
+  // loop_corridor is 8m x 6m; frame it fixed so the path's shape is comparable
+  // between episodes rather than rescaling every time.
+  const EX = 4.6, EY = 3.5, s = Math.min(W/(2*EX), H/(2*EY));
+  const X = x => W/2 + x*s, Y = y => H/2 - y*s;
+  // the ring, for context
+  g.strokeStyle = css('--line'); g.lineWidth = 1.5;
+  [[4,3],[3,2]].forEach(([a,b])=>{ g.strokeRect(X(-a), Y(b), 2*a*s, 2*b*s); });
+  g.strokeStyle = colourFor(INIT ? INIT.methods.indexOf($('#method').value) : 0);
+  g.lineWidth = 2; g.lineJoin='round'; g.lineCap='round';
+  g.beginPath();
+  PATH.forEach(([x,y],i)=> i?g.lineTo(X(x),Y(y)):g.moveTo(X(x),Y(y)));
+  g.stroke();
+  const [lx,ly] = PATH[PATH.length-1];
+  g.fillStyle = css('--text-primary');
+  g.beginPath(); g.arc(X(lx), Y(ly), 4, 0, 7); g.fill();
+}
+
+/* ---------- runs ---------- */
+let RUNS = [], SHOWN = new Set();
+async function loadRuns(){
+  const r = await (await fetch('/api/runs')).json();
+  RUNS = r.runs;
+  // On first open, plot the five canonical methods if they exist — that is the
+  // comparison worth seeing. Ticking every run by default turned the chart into
+  // spaghetti as soon as a few experiments accumulated.
+  if(!SHOWN.size){
+    const canonical = RUNS.filter(r => INIT && INIT.methods.includes(r.name));
+    (canonical.length ? canonical : RUNS.slice(0, 5)).forEach(x=>SHOWN.add(x.name));
+  }
+  const tb = $('#runtable').querySelector('tbody');
+  tb.innerHTML = RUNS.map((run,i)=>{
+    const laps = run.curve.map(c=>c.lap);
+    const best = laps.length ? Math.max(...laps) : 0;
+    const tail = laps.slice(-50);
+    const avg = tail.length ? tail.reduce((a,b)=>a+b,0)/tail.length : 0;
+    return `<tr>
+      <td><label style="display:flex;align-items:center;gap:8px;margin:0;color:var(--text-primary);font-size:14px">
+        <input type="checkbox" data-run="${run.name}" ${SHOWN.has(run.name)?'checked':''}>
+        <span class="swatch" style="background:${colourFor(i)}"></span>${run.name}</label></td>
+      <td>${run.episodes}</td><td>${best.toFixed(3)}</td><td>${avg.toFixed(3)}</td>
+      <td style="white-space:nowrap">
+        <button class="action ghost" data-eval="${run.name}">Score</button>
+        <button class="action ghost" data-video="${run.name}">Video</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5" style="color:var(--text-muted)">no saved runs yet — train one</td></tr>';
+  drawCompare();
+}
+
+$('#runtable').addEventListener('change', e=>{
+  const cb = e.target.closest('[data-run]'); if(!cb) return;
+  if(cb.checked && SHOWN.size >= MAX_SERIES){
+    cb.checked = false;
+    $('#rstatus').textContent =
+      `${MAX_SERIES} runs at once is the limit — a 9th line would have to reuse a `
+      + `colour, and two runs the same colour is worse than one fewer line. Untick one first.`;
+    return;
+  }
+  $('#rstatus').textContent = '';
+  cb.checked ? SHOWN.add(cb.dataset.run) : SHOWN.delete(cb.dataset.run);
+  drawCompare();
+});
+$('#runtable').addEventListener('click', async e=>{
+  const ev = e.target.closest('[data-eval]'), vd = e.target.closest('[data-video]');
+  if(ev){
+    ev.disabled=true; $('#rstatus').textContent = `scoring ${ev.dataset.eval} …`;
+    const r = await post('/api/evaluate', {run: ev.dataset.eval, episodes:5});
+    $('#rstatus').textContent = r.ok
+      ? `${ev.dataset.eval}: mean return ${r.return>=0?'+':''}${r.return}, mean lap ${r.lap}, ${r.laps}/${r.of} laps completed`
+      : r.error;
+    ev.disabled=false;
+  }
+  if(vd){
+    vd.disabled=true; $('#rstatus').textContent = `rendering ${vd.dataset.video} …`;
+    const r = await post('/api/record', {run: vd.dataset.video, seed:1000});
+    if(r.ok){
+      $('#videocard').hidden=false;
+      $('#videotitle').textContent = vd.dataset.video + ' driving';
+      $('#player').src = '/runs/'+r.video+'?t='+Date.now();
+      $('#videocard').scrollIntoView({behavior:'smooth'});
+      $('#rstatus').textContent = '';
+    } else $('#rstatus').textContent = r.error;
+    vd.disabled=false;
+  }
+});
+
+function drawCompare(){
+  const series = RUNS.filter(r=>SHOWN.has(r.name)).map(r=>({
+    colour: colourFor(RUNS.indexOf(r)), label: r.name,
+    points: smooth(r.curve.map(c=>c.lap), 20).map((v,i)=>[i,v]),
+  }));
+  $('#runlegend').innerHTML = series.map(s=>
+    `<span><span class="swatch" style="background:${s.colour}"></span>${s.label}</span>`).join('');
+  lineChart($('#cmplap'), series, {yMin:0, yMax:1, dp:2, empty:'tick a run to plot it'});
+}
+
+addEventListener('resize', ()=>{ drawLive(); drawCompare(); });
+init().then(()=>{ showTab(location.hash.slice(1) || 'tracks'); $('#gshow').click(); tick(); });
+</script>
+</body>
+</html>

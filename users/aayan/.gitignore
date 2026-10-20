@@ -1,0 +1,6 @@
+# Training output: tables, networks, videos, logs. All of it comes back from
+# tabular.py, dqn.py and run.py.
+runs/
+
+# Finder leaves these all over a Google Drive folder.
+.DS_Store

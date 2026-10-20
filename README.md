@@ -4,10 +4,10 @@ Reinforcement learning for the NeoRacer RC car: a [Gymnasium](https://gymnasium.
 
 ## Setup
 
-With Python 3.15 and [uv](https://docs.astral.sh/uv/):
+With Python 3.14 and [uv](https://docs.astral.sh/uv/):
 
 ```sh
-uv venv --python 3.15 && source .venv/bin/activate
+uv venv --python 3.14 && source .venv/bin/activate
 uv pip install -e ".[dev]"
 python -m examples.random_actions
 ```

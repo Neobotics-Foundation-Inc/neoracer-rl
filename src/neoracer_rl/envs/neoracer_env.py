@@ -119,7 +119,7 @@ _ACTION_HIGH = np.array([1.0, 1.0], dtype=np.float32)
 type TerminationReason = Literal["rollover", "crash", "stuck", "lap_complete"]
 
 
-class EnvInfo(TypedDict, closed=True):
+class EnvInfo(TypedDict):
     """The info dict of reset() and step(). gymnasium requires a dict."""
 
     progress_rad: float  # rad; cumulative signed progress in this episode

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "neoracer-rl"
 version = "0.1.0"
-description = "Gymnasium environments and example learning algorithms for the NeoRacer 1/12-scale RC car simulator."
+description = "Gymnasium environments and example learning algorithms for the simulated NeoRacer, a 1/12-scale autonomous racing car."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

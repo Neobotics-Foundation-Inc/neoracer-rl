@@ -22,7 +22,7 @@ import ai_credit
 
 TITLE = "NeoRacer RL"
 ABSTRACT = (
-    "A Gymnasium environment for the NeoRacer, a 1/12-scale RC car simulated in "
+    "A Gymnasium environment for the NeoRacer, a 1/12-scale autonomous racing car simulated in "
     "MuJoCo, and a PPO agent in JAX that learns to drive it around a track."
 )
 REPOSITORY = "https://github.com/Neobotics-Foundation-Inc/neoracer-rl"

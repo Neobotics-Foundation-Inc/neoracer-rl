@@ -66,9 +66,14 @@ def program_imports(rc: object) -> Generator[None]:
         sys.modules.update(hidden)
 
 
-def drive(seconds: float, direction: policy.Direction, speed_limit: float) -> Drive:
-    """Run driver.py for seconds of simulated time, with its DIRECTION and
-    SPEED_LIMIT set to direction and speed_limit."""
+def drive(
+    seconds: float,
+    direction: policy.Direction,
+    speed_limit: float,
+    log: str | None = None,
+) -> Drive:
+    """Run driver.py for seconds of simulated time, with its DIRECTION,
+    SPEED_LIMIT and LOG set to direction, speed_limit and log."""
     config = NeoRacerEnvConfig(car_path=CAR)
     scene = neoracer_env.loop_scene(config, visuals=False)
     model, car = scene.model, scene.car
@@ -94,6 +99,7 @@ def drive(seconds: float, direction: policy.Direction, speed_limit: float) -> Dr
         program: dict[str, Any] = runpy.run_path(str(PROGRAM), run_name="driver")
     settings = program["update"].__globals__
     settings["DIRECTION"], settings["SPEED_LIMIT"] = direction, speed_limit
+    settings["LOG"] = log
 
     angle = float(neoracer_env.angle_around_center(model, car, data.sensordata))
     turned, contacts, touching = 0.0, 0, False
@@ -129,8 +135,9 @@ def main() -> None:
         default="counterclockwise",
     )
     parser.add_argument("--speed-limit", type=float, default=1.0)
+    parser.add_argument("--log", metavar="PATH", help="a CSV file of the actions")
     args = parser.parse_args()
-    result = drive(args.seconds, args.direction, args.speed_limit)
+    result = drive(args.seconds, args.direction, args.speed_limit, args.log)
     print(
         f"[drive_v2] {args.seconds:.0f} s {args.direction}: {result.laps:+.2f} laps, "
         f"{result.wall_contacts} wall contacts"

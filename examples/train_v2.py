@@ -1,6 +1,7 @@
 """
 Train the RACECAR Neo V2's driving policy, racecar_neo_v2/policy.py, with PPO
-in the car's MuJoCo model on loop_corridor, or evaluate a trained one.
+in the car's MuJoCo model, or evaluate a trained one. --tracks loop trains
+on loop_corridor, --tracks generated on a pool of generated tracks.
 
 The policy sees what the car's racecar_core shows a program. The V2's model
 reads its LiDAR beams as racecar_core reports them: a whole turn of the head
@@ -13,8 +14,8 @@ them. At each control step, sense() adds what the model does not have:
 - In some episodes, each action reaches the car a control step late.
 
 The network, the rollout and the training are train_ppo.py's; this file
-gives them the car's sensing, RacecarCore. --eval drives each car
-with policy.act, the code that runs on the car.
+gives them the car's sensing, RacecarCore. --eval drives each car with
+policy.act, the code that runs on the car.
 
 Usage:
     python3 -m examples.train_v2 --total-steps 2500000 --seed 0 --out v2_policy.npz

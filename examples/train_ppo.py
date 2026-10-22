@@ -762,6 +762,38 @@ def parse_tracks(text: str) -> Literal["loop", "generated"]:
             )
 
 
+def add_track_arguments(
+    parser: argparse.ArgumentParser, default: Literal["loop", "generated"]
+) -> None:
+    """The options that parse_track_arguments reads."""
+    parser.add_argument(
+        "--tracks",
+        type=parse_tracks,
+        default=default,
+        help="loop (loop_corridor) or generated (a pool of generated tracks)",
+    )
+    parser.add_argument("--pool", type=int, default=16, help="generated tracks")
+    parser.add_argument("--difficulty", type=int, choices=range(4), default=1)
+    parser.add_argument(
+        "--first-track-seed",
+        type=int,
+        default=0,
+        help="the pool is the first --pool seeds from this one that give a track",
+    )
+
+
+def parse_track_arguments(args: argparse.Namespace) -> Tracks:
+    """The tracks that the options of add_track_arguments name."""
+    kind: Literal["loop", "generated"] = args.tracks
+    match kind:
+        case "loop":
+            return LoopCorridor()
+        case "generated":
+            return GeneratedTracks(args.difficulty, args.pool, args.first_track_seed)
+        case _:
+            assert_never(kind)
+
+
 def parse_baseline(text: str) -> Baseline:
     match text:
         case "random" | "zero":
@@ -802,30 +834,10 @@ def main() -> None:
         action="store_true",
         help="train and evaluate with the car physics drawn from RANDOM_PHYSICS",
     )
-    parser.add_argument(
-        "--tracks",
-        type=parse_tracks,
-        default="loop",
-        help="loop (loop_corridor) or generated (a pool of generated tracks)",
-    )
-    parser.add_argument("--pool", type=int, default=16, help="generated tracks")
-    parser.add_argument("--difficulty", type=int, choices=range(4), default=1)
-    parser.add_argument(
-        "--first-track-seed",
-        type=int,
-        default=0,
-        help="the pool is the first --pool seeds from this one that give a track",
-    )
+    add_track_arguments(parser, default="loop")
     args = parser.parse_args()
     params = PPOParams()
-    kind_of_tracks: Literal["loop", "generated"] = args.tracks
-    match kind_of_tracks:
-        case "loop":
-            tracks: Tracks = LoopCorridor()
-        case "generated":
-            tracks = GeneratedTracks(args.difficulty, args.pool, args.first_track_seed)
-        case _:
-            assert_never(kind_of_tracks)
+    tracks = parse_track_arguments(args)
     config = NeoRacerEnvConfig(
         tracks=tracks,
         physics=RANDOM_PHYSICS if args.random_physics else PhysicsRanges(),

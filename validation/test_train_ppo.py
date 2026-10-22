@@ -3,7 +3,9 @@ Laws for the PPO baseline (examples/train_ppo.py): GAE, the clipped loss,
 the observation statistics, and a short training run on NeoRacerBatch.
 """
 
+import argparse
 from dataclasses import replace
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -18,6 +20,7 @@ from examples.train_ppo import (
     ObsStats,
     PPOParams,
     RolloutState,
+    add_track_arguments,
     clipped_surrogate,
     collect_rollout,
     empty_obs_stats,
@@ -25,14 +28,20 @@ from examples.train_ppo import (
     init_actor_critic,
     init_opt_state,
     load_policy,
+    parse_track_arguments,
     ppo_loss,
     ppo_update,
     save_policy,
     update_obs_stats,
 )
-from neoracer_rl.envs import NeoRacerEnvConfig, RewardConfig
+from neoracer_rl.envs import (
+    GeneratedTracks,
+    LoopCorridor,
+    NeoRacerEnvConfig,
+    RewardConfig,
+)
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
-from neoracer_rl.envs.neoracer_env import OBS_DIM
+from neoracer_rl.envs.neoracer_env import OBS_DIM, Tracks
 
 
 def _reward_to_go(rewards: np.ndarray, dones: np.ndarray) -> np.ndarray:
@@ -231,3 +240,22 @@ def test_truncation_bootstraps_from_the_last_observation_of_the_episode():
             assert np.all(np.abs(last - replay.obs[:, speed]) > 1e-3)
             np.testing.assert_allclose(target[t], params.gamma * last, rtol=1e-4)
     env.close()
+
+
+def test_the_track_options_name_the_tracks():
+    generated = ("--tracks", "generated")
+    cases: tuple[tuple[Literal["loop", "generated"], tuple[str, ...], Tracks], ...] = (
+        ("loop", (), LoopCorridor()),
+        ("generated", (), GeneratedTracks()),
+        ("generated", ("--tracks", "loop"), LoopCorridor()),
+        ("loop", generated, GeneratedTracks()),
+        (
+            "loop",
+            (*generated, "--pool", "4", "--difficulty", "3", "--first-track-seed", "9"),
+            GeneratedTracks(difficulty=3, count=4, first_seed=9),
+        ),
+    )
+    for default, argv, tracks in cases:
+        parser = argparse.ArgumentParser()
+        add_track_arguments(parser, default=default)
+        assert parse_track_arguments(parser.parse_args(argv)) == tracks, argv

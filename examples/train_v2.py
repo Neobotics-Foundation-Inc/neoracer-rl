@@ -1,6 +1,7 @@
 """
 Train the RACECAR Neo V2's driving policy, racecar_neo_v2/policy.py, with PPO
-in the car's MuJoCo model on loop_corridor, or evaluate a trained one.
+in the car's MuJoCo model, or evaluate a trained one. --tracks loop trains
+on loop_corridor, --tracks generated on a pool of generated tracks.
 
 The policy sees what the car's racecar_core shows a program. The V2's model
 reads its LiDAR beams as racecar_core reports them: a whole turn of the head
@@ -13,8 +14,8 @@ them. At each control step, sense() adds what the model does not have:
 - In some episodes, each action reaches the car a control step late.
 
 The network, the rollout and the training are train_ppo.py's; this file
-gives them the car's sensing, RacecarCore. --eval drives each car
-with policy.act, the code that runs on the car.
+gives them the car's sensing, RacecarCore. --eval drives each car with
+policy.act, the code that runs on the car.
 
 Usage:
     python3 -m examples.train_v2 --total-steps 2500000 --seed 0 --out v2_policy.npz
@@ -38,9 +39,11 @@ from examples.train_ppo import (
     EpisodeResult,
     ObsStats,
     PPOParams,
+    add_track_arguments,
+    parse_track_arguments,
     train,
 )
-from neoracer_rl.envs import LoopCorridor, NeoRacerEnvConfig, neoracer_env
+from neoracer_rl.envs import NeoRacerEnvConfig, neoracer_env
 from neoracer_rl.envs.neoracer_batch import REASONS, Cpu, NeoRacerBatch
 
 CAR = os.path.join(assets.ASSET_DIR, "racecar_neo_v2.xml")
@@ -278,9 +281,11 @@ def main() -> None:
     parser.add_argument("--out", help="save the trained policy to this .npz file")
     parser.add_argument("--eval", metavar="PATH", help="evaluate a saved policy")
     parser.add_argument("--episodes", type=int, default=32, help="evaluation episodes")
+    add_track_arguments(parser, default="loop")
     args = parser.parse_args()
     params, sensing_params = PPOParams(), SensingParams()
-    config = NeoRacerEnvConfig(car_path=CAR, tracks=LoopCorridor(), physics=PHYSICS)
+    tracks = parse_track_arguments(args)
+    config = NeoRacerEnvConfig(car_path=CAR, tracks=tracks, physics=PHYSICS)
 
     if args.eval is not None:
         car = policy.load(args.eval)
@@ -299,7 +304,7 @@ def main() -> None:
             if r.outcome == "lap_complete"
         ]
         print(
-            f"[eval] {args.eval}: {len(results)} episodes, "
+            f"[eval] {args.eval} on {tracks}: {len(results)} episodes, "
             f"outcomes {dict(Counter(r.outcome for r in results))}, "
             f"mean lap_frac {np.mean([r.lap_frac for r in results]):.3f}, "
             f"mean lap time {np.mean(laps) if laps else float('nan'):.1f} s"
@@ -310,7 +315,7 @@ def main() -> None:
     print(f"[train_v2] {sensing_params}")
     print(
         f"[train_v2] total_steps={args.total_steps} seed={args.seed} "
-        f"num_envs={args.num_envs} physics={PHYSICS}"
+        f"num_envs={args.num_envs} tracks={tracks} physics={PHYSICS}"
     )
     net, stats = train(
         params,

@@ -39,7 +39,7 @@ import time
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, assert_never, cast
+from typing import Literal, Protocol, assert_never, cast
 
 import jax
 import jax.numpy as jnp
@@ -80,7 +80,7 @@ RANDOM_PHYSICS = PhysicsRanges(
     steer_stiffness=Range(0.5, 2.0),
 )
 
-type ObsBatch = npt.NDArray[np.float64]  # shape (batch, OBS_DIM)
+type ObsBatch = npt.NDArray[np.float64]  # shape (batch, obs_dim)
 
 
 @dataclass(frozen=True)
@@ -158,13 +158,15 @@ def init_mlp(
     )
 
 
-@functools.partial(jax.jit, static_argnames=("params",))
-def init_actor_critic(key: jax.Array, params: PPOParams) -> ActorCritic:
+@functools.partial(jax.jit, static_argnames=("params", "obs_dim"))
+def init_actor_critic(
+    key: jax.Array, params: PPOParams, obs_dim: int = OBS_DIM
+) -> ActorCritic:
     actor_key, critic_key = jax.random.split(key)
     return ActorCritic(
         # A small gain makes the initial action mean close to 0.
-        actor=init_mlp(actor_key, (OBS_DIM, *params.hidden, ACTION_DIM), 0.01),
-        critic=init_mlp(critic_key, (OBS_DIM, *params.hidden, 1), 1.0),
+        actor=init_mlp(actor_key, (obs_dim, *params.hidden, ACTION_DIM), 0.01),
+        critic=init_mlp(critic_key, (obs_dim, *params.hidden, 1), 1.0),
         log_std=jnp.full(ACTION_DIM, params.init_log_std),
     )
 
@@ -211,13 +213,13 @@ def greedy_action(net: ActorCritic, obs: jax.Array) -> jax.Array:
 class ObsStats:
     """Running mean and variance of the raw observations."""
 
-    mean: npt.NDArray[np.float64]  # shape (OBS_DIM,)
-    var: npt.NDArray[np.float64]  # shape (OBS_DIM,), population variance
+    mean: npt.NDArray[np.float64]  # shape (obs_dim,)
+    var: npt.NDArray[np.float64]  # shape (obs_dim,), population variance
     count: float  # observations seen; 0 = no data yet
 
 
-def empty_obs_stats() -> ObsStats:
-    return ObsStats(mean=np.zeros(OBS_DIM), var=np.ones(OBS_DIM), count=0.0)
+def empty_obs_stats(obs_dim: int = OBS_DIM) -> ObsStats:
+    return ObsStats(mean=np.zeros(obs_dim), var=np.ones(obs_dim), count=0.0)
 
 
 def update_obs_stats(stats: ObsStats, batch: ObsBatch) -> ObsStats:
@@ -380,14 +382,73 @@ class EpisodeResult:
     steps: int  # env steps (30 Hz)
 
 
+type EnvObsBatch = npt.NDArray[np.float32]  # shape (N, OBS_DIM), the env's
+type ActionBatch = npt.NDArray[np.float64]  # shape (N, ACTION_DIM)
+type Rows = npt.NDArray[np.bool_]  # shape (N,)
+
+
+class Interface[S](Protocol):
+    """What stands between the policy and the envs: what the policy sees of
+    the envs' observations, and the actions that reach the envs. S is what
+    it carries from one step to the next; rng draws its randomness."""
+
+    @property
+    def obs_dim(self) -> int:
+        """The size of an observation that the policy sees."""
+        ...
+
+    def start(self, obs: EnvObsBatch, rng: np.random.Generator) -> S:
+        """For envs at their spawns, where they observe obs."""
+        ...
+
+    def observe(
+        self, s: S, obs: EnvObsBatch, rng: np.random.Generator
+    ) -> tuple[S, ObsBatch]: ...
+
+    def act(self, s: S, action: ActionBatch) -> tuple[S, ActionBatch]: ...
+
+    def restart(
+        self, s: S, rows: Rows, obs: EnvObsBatch, rng: np.random.Generator
+    ) -> S:
+        """s with the envs in rows started over at their spawns, where they
+        observe obs."""
+        ...
+
+
 @dataclass(frozen=True)
-class RolloutState:
+class Exact:
+    """The policy sees the envs' observations, and its actions reach the envs."""
+
+    @property
+    def obs_dim(self) -> int:
+        return OBS_DIM
+
+    def start(self, obs: EnvObsBatch, rng: np.random.Generator) -> None:
+        return None
+
+    def observe(
+        self, s: None, obs: EnvObsBatch, rng: np.random.Generator
+    ) -> tuple[None, ObsBatch]:
+        return s, obs.astype(np.float64)
+
+    def act(self, s: None, action: ActionBatch) -> tuple[None, ActionBatch]:
+        return s, action
+
+    def restart(
+        self, s: None, rows: Rows, obs: EnvObsBatch, rng: np.random.Generator
+    ) -> None:
+        return s
+
+
+@dataclass(frozen=True)
+class RolloutState[S]:
     """The state that a rollout carries to the next rollout."""
 
     env: BatchState  # the episode of each env
     episode_return: npt.NDArray[np.float64]  # return so far of each env, shape (N,)
     episode_steps: npt.NDArray[np.int64]  # steps so far of each env, shape (N,)
     stats: ObsStats
+    carry: S  # what the interface carries to the next step
 
 
 def _outcome(info: EnvInfo) -> Outcome:
@@ -397,49 +458,56 @@ def _outcome(info: EnvInfo) -> Outcome:
     return "truncated" if reason is None else reason
 
 
-def collect_rollout(
+def collect_rollout[S](
     env: NeoRacerBatch,
-    state: RolloutState,
+    state: RolloutState[S],
     net: ActorCritic,
     key: jax.Array,
     params: PPOParams,
-) -> tuple[Batch, RolloutState, list[EpisodeResult]]:
-    """Step every env params.rollout_steps times with the sampled policy.
-    An env whose episode ends starts over in the same step.
+    interface: Interface[S],
+    rng: np.random.Generator,
+) -> tuple[Batch, RolloutState[S], list[EpisodeResult]]:
+    """Step every env params.rollout_steps times with the sampled policy,
+    which sees the envs and acts on them through interface. An env whose
+    episode ends starts over in the same step.
 
     On truncation, the reward of the last step gets gamma * V(final observation),
     so that the time limit does not look like a terminal state to GAE.
     """
-    t_len, n = params.rollout_steps, env.nbatch
-    obs_buf = np.zeros((t_len, n, OBS_DIM), dtype=np.float32)
+    t_len, n, obs_dim = params.rollout_steps, env.nbatch, interface.obs_dim
+    obs_buf = np.zeros((t_len, n, obs_dim), dtype=np.float32)
     act_buf = np.zeros((t_len, n, ACTION_DIM), dtype=np.float32)
     logp_buf = np.zeros((t_len, n), dtype=np.float32)
     val_buf = np.zeros((t_len, n), dtype=np.float32)
     rew_buf = np.zeros((t_len, n), dtype=np.float32)
     done_buf = np.zeros((t_len, n), dtype=np.float32)
-    env_state, ep_ret, ep_steps, stats = (
+    env_state, ep_ret, ep_steps, stats, carry = (
         state.env,
         state.episode_return.copy(),
         state.episode_steps.copy(),
         state.stats,
+        state.carry,
     )
     finished: list[EpisodeResult] = []
     step_keys = jax.random.split(key, t_len)
 
     for t in range(t_len):
-        raw_obs = env_state.obs.astype(np.float64)
+        carry, raw_obs = interface.observe(carry, env_state.obs, rng)
         stats = update_obs_stats(stats, raw_obs)
         obs = normalize_obs(stats, raw_obs, params.obs_clip)
         action, logp, val = sample_action(net, jnp.asarray(obs), step_keys[t])
-        action_np = np.asarray(action)
+        action_np = np.asarray(action, dtype=np.float64)
         obs_buf[t], act_buf[t], logp_buf[t], val_buf[t] = obs, action_np, logp, val
-        env_state, out = env.step(env_state, action_np)
+        carry, applied = interface.act(carry, action_np)
+        env_state, out = env.step(env_state, applied)
         ep_ret += out.reward
         ep_steps += 1
         rew_buf[t] = out.reward
         done_buf[t] = out.done
         if out.truncated.any():
-            final = normalize_obs(stats, out.obs.astype(np.float64), params.obs_clip)
+            # The value of the last observation, as the policy would see it.
+            _, final_obs = interface.observe(carry, out.obs, rng)
+            final = normalize_obs(stats, final_obs, params.obs_clip)
             final_value = np.asarray(value(net, jnp.asarray(final)))
             rew_buf[t] += np.where(out.truncated, params.gamma * final_value, 0.0)
         for i in np.flatnonzero(out.done):
@@ -453,8 +521,10 @@ def collect_rollout(
                 )
             )
         ep_ret[out.done], ep_steps[out.done] = 0.0, 0
+        if out.done.any():
+            carry = interface.restart(carry, out.done, env_state.obs, rng)
 
-    raw_obs = env_state.obs.astype(np.float64)
+    _, raw_obs = interface.observe(carry, env_state.obs, rng)
     last_obs = normalize_obs(stats, raw_obs, params.obs_clip)
     last_value = value(net, jnp.asarray(last_obs))
     advantage, target = gae(
@@ -466,13 +536,14 @@ def collect_rollout(
         params.gae_lambda,
     )
     batch = Batch(
-        obs=jnp.asarray(obs_buf).reshape(t_len * n, OBS_DIM),
+        obs=jnp.asarray(obs_buf).reshape(t_len * n, obs_dim),
         action=jnp.asarray(act_buf).reshape(t_len * n, ACTION_DIM),
         log_prob=jnp.asarray(logp_buf).reshape(-1),
         advantage=advantage.reshape(-1),
         target=target.reshape(-1),
     )
-    return batch, RolloutState(env_state, ep_ret, ep_steps, stats), finished
+    next_state = RolloutState(env_state, ep_ret, ep_steps, stats, carry)
+    return batch, next_state, finished
 
 
 @dataclass(frozen=True)
@@ -501,36 +572,41 @@ def format_log(log: UpdateLog, steps_per_s: float) -> str:
     )
 
 
-def train(
+def train[S](
     params: PPOParams,
     total_steps: int,
     seed: int,
     num_envs: int,
     backend: Backend,
     config: NeoRacerEnvConfig,
+    interface: Interface[S],
 ) -> tuple[ActorCritic, ObsStats]:
     """Train for at least total_steps env steps. Print one log line per update.
-    The spawns and the physics come from default_rng(seed); each update draws
-    new ones."""
+    The spawns, the physics and the interface's randomness come from
+    default_rng(seed); each update draws new spawns and physics."""
     key = jax.random.key(seed)
     key, init_key = jax.random.split(key)
-    net = init_actor_critic(init_key, params)
+    net = init_actor_critic(init_key, params, interface.obs_dim)
     opt_state = init_opt_state(net, params)
     env = NeoRacerBatch(backend, num_envs, config)
-    spawn_rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(seed)
+    env_state = env.reset(rng)
     state = RolloutState(
-        env=env.reset(spawn_rng),
+        env=env_state,
         episode_return=np.zeros(num_envs),
         episode_steps=np.zeros(num_envs, dtype=np.int64),
-        stats=empty_obs_stats(),
+        stats=empty_obs_stats(interface.obs_dim),
+        carry=interface.start(env_state.obs, rng),
     )
     steps_per_update = params.rollout_steps * num_envs
     updates = -(-total_steps // steps_per_update)  # ceiling division
     for update in range(1, updates + 1):
         start = time.perf_counter()
         key, rollout_key, update_key = jax.random.split(key, 3)
-        batch, state, finished = collect_rollout(env, state, net, rollout_key, params)
-        state = replace(state, env=env.respawn(state.env, spawn_rng))
+        batch, state, finished = collect_rollout(
+            env, state, net, rollout_key, params, interface, rng
+        )
+        state = replace(state, env=env.respawn(state.env, rng))
         net, opt_state, loss = ppo_update(net, opt_state, batch, update_key, params)
         log = UpdateLog(
             update=update,
@@ -790,7 +866,7 @@ def main() -> None:
         case _:
             assert_never(kind)
     net, stats = train(
-        params, args.total_steps, args.seed, args.num_envs, backend, config
+        params, args.total_steps, args.seed, args.num_envs, backend, config, Exact()
     )
     if args.out is not None:
         save_policy(args.out, net, stats)

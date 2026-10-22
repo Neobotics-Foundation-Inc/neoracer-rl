@@ -14,6 +14,7 @@ from examples.train_ppo import (
     ACTION_DIM,
     Batch,
     Dense,
+    Exact,
     ObsStats,
     PPOParams,
     RolloutState,
@@ -161,17 +162,21 @@ def test_running_obs_stats_match_numpy_over_all_batches(seed):
 def test_short_training_run_changes_the_params_and_keeps_them_finite(tmp_path):
     params = PPOParams(rollout_steps=128, epochs=2, minibatches=2, hidden=(16,))
     env = NeoRacerBatch(Cpu(nthread=0), nbatch=2)
+    rng = np.random.default_rng(0)
     state = RolloutState(
-        env.reset(np.random.default_rng(0)),
+        env.reset(rng),
         np.zeros(2),
         np.zeros(2, dtype=np.int64),
         empty_obs_stats(),
+        None,
     )
     net = init_actor_critic(jax.random.key(1), params)
     opt_state = init_opt_state(net, params)
     start = net
     # One update from 128 * 2 = 256 env steps.
-    batch, state, _ = collect_rollout(env, state, net, jax.random.key(10), params)
+    batch, state, _ = collect_rollout(
+        env, state, net, jax.random.key(10), params, Exact(), rng
+    )
     env.close()
     net, opt_state, info = ppo_update(net, opt_state, batch, jax.random.key(20), params)
     assert all(np.isfinite(float(x)) for x in jax.tree.leaves(info))
@@ -206,9 +211,12 @@ def test_truncation_bootstraps_from_the_last_observation_of_the_episode():
     net = replace(net, critic=(Dense(jnp.asarray(pick), jnp.zeros(1)),))
     # With this many observations seen, normalize_obs is the identity.
     stats = ObsStats(np.zeros(OBS_DIM), np.ones(OBS_DIM), 1e15)
-    start = env.reset(np.random.default_rng(0))
-    state = RolloutState(start, np.zeros(2), np.zeros(2, dtype=np.int64), stats)
-    batch, _, finished = collect_rollout(env, state, net, jax.random.key(1), params)
+    rng = np.random.default_rng(0)
+    start = env.reset(rng)
+    state = RolloutState(start, np.zeros(2), np.zeros(2, dtype=np.int64), stats, None)
+    batch, _, finished = collect_rollout(
+        env, state, net, jax.random.key(1), params, Exact(), rng
+    )
     assert [e.outcome for e in finished] == ["truncated"] * 4
 
     # Replay the actions to see the observation after each step.

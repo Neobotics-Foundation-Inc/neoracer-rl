@@ -128,7 +128,8 @@ def test_the_program_acts_once_a_control_period_whatever_its_update_rate():
 def test_after_a_stall_the_program_acts_at_once_and_next_a_period_later():
     car = _counting_policy()
     scan = np.full(1080, 100.0)
-    for stall in (2 * policy.CONTROL_PERIOD, 0.1, 1.0):
+    period = policy.CONTROL_PERIOD
+    for stall in (period, 1.5 * period, 2 * period, 0.1, 1.0):
         for frame in (1e-3, 1 / 360, 1 / 100):
             driver = policy.START
             for dt in (frame, stall):
@@ -140,7 +141,6 @@ def test_after_a_stall_the_program_acts_at_once_and_next_a_period_later():
                     car, driver, frame, scan, 0.5, "counterclockwise"
                 )
                 waited += frame
-            period = policy.CONTROL_PERIOD
             assert period <= waited < period + frame, (stall, frame, waited)
 
 

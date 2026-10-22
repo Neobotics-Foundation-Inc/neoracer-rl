@@ -1,7 +1,8 @@
 """
 A golden run of the shipped policy: examples/drive_v2.py runs the car's
 program, examples/racecar_neo_v2/driver.py, unchanged on the RACECAR Neo
-V2's model on loop_corridor, through the racecar_core adapter.
+V2's model on loop_corridor, through the racecar_core adapter. And the
+program's log of its actions, which replays them.
 """
 
 import csv

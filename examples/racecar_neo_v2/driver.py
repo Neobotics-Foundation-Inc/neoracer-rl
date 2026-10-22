@@ -13,6 +13,7 @@ Hold the right bumper while it drives; release it to stop. For a first run,
 lower SPEED_LIMIT and keep a hand on the bumper.
 """
 
+import csv
 import os
 import sys
 
@@ -28,6 +29,8 @@ SPEED_LIMIT = 1.0
 DIRECTION: policy.Direction = "counterclockwise"
 # Drive only while the right bumper is held.
 REQUIRE_DEADMAN = True
+# A CSV file to record each action in, with policy.LOG_COLUMNS, or None.
+LOG: str | None = None
 
 rc = racecar_core.create_racecar()
 POLICY = policy.load(
@@ -39,6 +42,7 @@ ENCODER = hasattr(rc.physics, "get_encoder_speed")
 
 driver = policy.START
 scan = policy.NO_SCAN
+clock = 0.0  # s since start
 
 
 def speed() -> float:
@@ -50,8 +54,11 @@ def speed() -> float:
 
 
 def start() -> None:
-    global driver, scan
-    driver, scan = policy.START, policy.NO_SCAN
+    global driver, scan, clock
+    driver, scan, clock = policy.START, policy.NO_SCAN, 0.0
+    if LOG is not None:
+        with open(LOG, "w", newline="") as f:
+            csv.writer(f).writerow(policy.LOG_COLUMNS)
     # The policy's throttle is the share of the car's full speed.
     rc.drive.set_max_speed(1.0)
     rc.drive.stop()
@@ -60,8 +67,9 @@ def start() -> None:
 
 
 def update() -> None:
-    global driver, scan
+    global driver, scan, clock
     dt = rc.get_delta_time()
+    clock += dt
     scan = policy.watch(scan, rc.lidar.get_samples(), dt)
     if REQUIRE_DEADMAN and not rc.controller.is_down(rc.controller.Button.RB):
         driver = policy.START
@@ -73,8 +81,15 @@ def update() -> None:
         driver = policy.START
         rc.drive.stop()
         return
-    driver = policy.control(POLICY, driver, dt, scan.samples_cm, speed(), DIRECTION)
-    rc.drive.set_speed_angle(*policy.command(POLICY, driver.action, SPEED_LIMIT))
+    car_speed, last, acts = speed(), driver.action, policy.due(driver, dt)
+    driver = policy.control(POLICY, driver, dt, scan.samples_cm, car_speed, DIRECTION)
+    command = policy.command(POLICY, driver.action, SPEED_LIMIT)
+    rc.drive.set_speed_angle(*command)
+    if acts and LOG is not None:
+        ranges = policy.ranges_from_scan(scan.samples_cm)
+        with open(LOG, "a", newline="") as f:
+            row = (clock, *ranges, car_speed, *last, *driver.action, *command)
+            csv.writer(f).writerow(row)
 
 
 def update_slow() -> None:

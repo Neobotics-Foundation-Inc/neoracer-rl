@@ -38,6 +38,19 @@ STEADY_SPEED = ((0.0, 0.0), (0.25, 0.721), (0.5, 0.833), (1.0, 1.07))
 # stopped, and racecar_core repeats its last scan. The head turns in 0.135 s,
 # and a real scan's noise changes it every turn.
 STALE_SCAN = 0.5
+# The columns of driver.py's log, a row for each action: what the policy
+# read, its last action and the new one, and the command that the car got.
+LOG_COLUMNS = (
+    "time",  # s since the program started
+    *(f"range_{degrees}" for degrees in BEAM_DEGREES),  # m, not mirrored
+    "speed",  # m/s
+    "last_throttle",
+    "last_steering",
+    "throttle",
+    "steering",
+    "speed_command",  # racecar_core's set_speed_angle
+    "angle_command",
+)
 
 
 def ranges_from_scan(samples_cm: npt.ArrayLike) -> Ranges:
@@ -170,6 +183,31 @@ def stale(scan: Scan) -> bool:
     return scan.age > STALE_SCAN
 
 
+def decide(
+    policy: Policy,
+    ranges: Ranges,
+    speed: float,
+    last_action: Action,
+    direction: Direction,
+) -> Action:
+    """The action for the ranges (m) at BEAM_DEGREES, the speed (m/s) and
+    the last action, driving in direction."""
+    match direction:
+        case "counterclockwise":
+            return act(policy, observation(ranges, speed, last_action))
+        case "clockwise":
+            flip = np.array([1.0, -1.0])
+            seen = observation(mirror_ranges(ranges), speed, last_action * flip)
+            return act(policy, seen) * flip
+        case _:
+            assert_never(direction)
+
+
+def due(driver: Driver, dt: float) -> bool:
+    """Whether the driver acts at an update dt (s) after the last."""
+    return driver.wait - dt <= 0.0
+
+
 def control(
     policy: Policy,
     driver: Driver,
@@ -185,18 +223,10 @@ def control(
     after a deadline, it acts at once and sets the next deadline a full
     period later. So two actions are at least half a period apart."""
     wait = driver.wait - dt
-    if wait > 0.0:
+    if not due(driver, dt):
         return replace(driver, wait=wait)
     ranges = ranges_from_scan(scan_cm)
-    match direction:
-        case "counterclockwise":
-            action = act(policy, observation(ranges, speed, driver.action))
-        case "clockwise":
-            flip = np.array([1.0, -1.0])
-            seen = observation(mirror_ranges(ranges), speed, driver.action * flip)
-            action = act(policy, seen) * flip
-        case _:
-            assert_never(direction)
+    action = decide(policy, ranges, speed, driver.action, direction)
     stalled = wait < -CONTROL_PERIOD / 2
     return Driver(action, CONTROL_PERIOD if stalled else wait + CONTROL_PERIOD)
 

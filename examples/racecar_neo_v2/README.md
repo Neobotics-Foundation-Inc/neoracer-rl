@@ -21,6 +21,7 @@ Hold the right bumper while it drives, and release it to stop. The car also stop
 - `SPEED_LIMIT` is the share of the policy's throttle that the car gets. The car's speed controller holds 0.72 m/s at a quarter of full throttle, 0.83 m/s at half and 1.07 m/s at full.
 - `DIRECTION = "clockwise"` drives the other way round. The policy then sees the scan mirrored and steers mirrored, since the car is close to symmetric.
 - `REQUIRE_DEADMAN` drives only while the right bumper is held.
+- `LOG = "drive.csv"` records each action in a CSV file: the eight ranges and the speed that the policy read, its last action and the new one, and the command that the car got. `policy.LOG_COLUMNS` names the columns. `python3 -m examples.drive_v2 --log sim.csv` writes the same log in simulation, to compare with the car's.
 
 The track needs closed walls about a metre apart, taller than the LiDAR, which sits about 19 cm above the floor. The policy has only seen `loop_corridor`, a corridor 1 m wide around a 6 m by 4 m block with chamfered corners. A different width or tighter corners may need retraining.
 

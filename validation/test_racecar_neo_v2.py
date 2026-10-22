@@ -180,12 +180,13 @@ def test_after_a_stall_the_program_acts_at_once_and_next_a_period_later():
 
 
 class _Racecar:
-    """racecar_core as driver.py uses it: the LiDAR gives samples, and the
-    car records each command, None for a stop."""
+    """racecar_core as driver.py uses it: the LiDAR gives samples, the right
+    bumper is down while held, and the car records each command, None for a
+    stop. Updates are dt (s) apart."""
 
-    DT = 1 / 60  # s, the time between two updates
-
-    def __init__(self) -> None:
+    def __init__(self, dt: float = 1 / 60) -> None:
+        self.dt = dt
+        self.held = True
         self.samples = np.zeros(0, dtype=np.float32)
         self.commands: list[tuple[float, float] | None] = []
         self.drive = types.SimpleNamespace(
@@ -196,11 +197,12 @@ class _Racecar:
         self.lidar = types.SimpleNamespace(get_samples=lambda: self.samples)
         self.physics = types.SimpleNamespace(get_encoder_speed=lambda: 0.5)
         self.controller = types.SimpleNamespace(
-            Button=types.SimpleNamespace(RB=5), is_down=lambda button: True
+            Button=types.SimpleNamespace(RB=5),
+            is_down=lambda button: button == 5 and self.held,
         )
 
     def get_delta_time(self) -> float:
-        return self.DT
+        return self.dt
 
 
 def test_the_car_stops_when_the_lidar_stops_and_drives_on_its_next_scan():
@@ -222,14 +224,50 @@ def test_the_car_stops_when_the_lidar_stops_and_drives_on_its_next_scan():
     assert drives(new_scan=True)
     # The LiDAR stops, and racecar_core repeats its last scan.
     for k in range(1, 61):
-        age = k * rc.DT
-        if age < policy.STALE_SCAN - rc.DT / 2:
+        age = k * rc.dt
+        if age < policy.STALE_SCAN - rc.dt / 2:
             assert drives(new_scan=False), age
-        elif age > policy.STALE_SCAN + rc.DT / 2:
+        elif age > policy.STALE_SCAN + rc.dt / 2:
             assert not drives(new_scan=False), age
         else:
             drives(new_scan=False)
     assert drives(new_scan=True)
+
+
+def test_the_car_drives_only_while_the_bumper_is_held_and_acts_when_pressed(
+    tmp_path,
+):
+    rng = np.random.default_rng(6)
+    rc = _Racecar(dt=0.01)
+    with drive_v2.program_imports(rc):
+        program = runpy.run_path(str(drive_v2.PROGRAM), run_name="driver")
+    log = tmp_path / "log.csv"
+    program["update"].__globals__["LOG"] = str(log)
+    program["start"]()
+    updates = itertools.count()
+
+    def drives() -> bool:
+        """Whether the car drives after an update, with a new scan each turn."""
+        if next(updates) % 13 == 0:
+            rc.samples = rng.uniform(50.0, 500.0, 1080).astype(np.float32)
+        program["update"]()
+        return rc.commands[-1] is not None
+
+    def actions() -> int:
+        with log.open() as f:
+            return sum(1 for _ in f) - 1  # the rows after the header
+
+    assert all(drives() for _ in range(50))
+    # Release the bumper right after an action, with the next deadline most
+    # of a period away.
+    acted = actions()
+    while actions() == acted:
+        drives()
+    rc.held = False
+    assert not any(drives() for _ in range(20))
+    rc.held = True
+    assert drives()
+    assert actions() == acted + 2  # it acts at once, without the old deadline
 
 
 def test_an_action_is_within_its_limits_for_any_observation():

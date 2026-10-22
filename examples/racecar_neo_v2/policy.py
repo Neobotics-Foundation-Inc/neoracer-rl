@@ -179,9 +179,11 @@ def control(
     direction: Direction,
 ) -> Driver:
     """The driver after an update dt (s) after the last, with the scan and
-    the speed (m/s) the car gives then. It acts every CONTROL_PERIOD,
-    whatever the rate of the updates. After a stall, an update a period or
-    more after the last, it acts at once and next a full period later."""
+    the speed (m/s) the car gives then. It acts at the first update after
+    each deadline, and the deadlines are CONTROL_PERIOD apart, whatever the
+    rate of the updates. After a stall, an update more than half a period
+    after a deadline, it acts at once and sets the next deadline a full
+    period later. So two actions are at least half a period apart."""
     wait = driver.wait - dt
     if wait > 0.0:
         return replace(driver, wait=wait)
@@ -195,7 +197,7 @@ def control(
             action = act(policy, seen) * flip
         case _:
             assert_never(direction)
-    stalled = dt >= CONTROL_PERIOD
+    stalled = wait < -CONTROL_PERIOD / 2
     return Driver(action, CONTROL_PERIOD if stalled else wait + CONTROL_PERIOD)
 
 

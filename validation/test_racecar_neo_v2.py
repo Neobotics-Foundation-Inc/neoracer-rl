@@ -9,6 +9,7 @@ import importlib.resources
 import itertools
 import runpy
 import types
+from collections.abc import Iterable
 
 import numpy as np
 from neoracer_spec.racecar_neo_v2 import RACECAR_NEO_V2
@@ -115,24 +116,55 @@ def _acts(driver: policy.Driver) -> int:
     return round(driver.action[0] / COUNT)
 
 
+def _action_times(car: policy.Policy, dts: Iterable[float]) -> list[float]:
+    """The times (s) at which the program acts, with updates dts (s) apart."""
+    scan = np.full(1080, 100.0)
+    driver, now, times = policy.START, 0.0, []
+    for dt in dts:
+        now += dt
+        acts = _acts(driver)
+        driver = policy.control(car, driver, dt, scan, 0.5, "counterclockwise")
+        if _acts(driver) > acts:
+            times.append(now)
+    return times
+
+
 def test_the_program_acts_once_a_control_period_whatever_its_update_rate():
     car = _counting_policy()
-    scan = np.full(1080, 100.0)
-    seconds = 3.0
-    for dt in (1 / 360, 1 / 100, 1 / 60, 1 / 30, 0.1):
-        driver = policy.START
-        for _ in range(round(seconds / dt)):
-            driver = policy.control(car, driver, dt, scan, 0.5, "counterclockwise")
+    period, seconds = policy.CONTROL_PERIOD, 3.0
+    # Each case repeats its updates; the last two jitter around the period.
+    for frames in (
+        (1 / 360,),
+        (1 / 100,),
+        (1 / 60,),
+        (period,),
+        (0.1,),
+        (period - 0.001, period + 0.001),
+        (period - 0.015, period + 0.015),
+    ):
+        dts = itertools.islice(
+            itertools.cycle(frames), round(seconds / np.mean(frames))
+        )
+        acts = len(_action_times(car, dts))
         # Updates slower than a control period each act.
-        expected = seconds / max(dt, policy.CONTROL_PERIOD)
-        assert abs(_acts(driver) - expected) <= 1, (dt, _acts(driver), expected)
+        expected = seconds / max(np.mean(frames), period)
+        assert abs(acts - expected) <= 1, (frames, acts, expected)
+
+
+def test_two_actions_are_at_least_half_a_period_apart():
+    rng = np.random.default_rng(2)
+    car = _counting_policy()
+    for high in (0.02, 0.04, 0.08):
+        times = _action_times(car, rng.uniform(1e-4, high, 2000))
+        assert np.min(np.diff(times)) >= policy.CONTROL_PERIOD / 2 - 1e-12, high
 
 
 def test_after_a_stall_the_program_acts_at_once_and_next_a_period_later():
     car = _counting_policy()
     scan = np.full(1080, 100.0)
     period = policy.CONTROL_PERIOD
-    for stall in (period, 1.5 * period, 2 * period, 0.1, 1.0):
+    # Each stall comes more than half a period after the next deadline.
+    for stall in (1.5 * period, 2 * period, 0.1, 1.0):
         for frame in (1e-3, 1 / 360, 1 / 100):
             driver = policy.START
             for dt in (frame, stall):

@@ -37,6 +37,8 @@ This took about 35 minutes with `--nthread 2`, on a 4-core machine that trained 
 
 `python3 -m examples.train_v2 --eval examples/racecar_neo_v2/v2_policy.npz` drives 32 episodes of up to 60 s with the same random physics and sensing. 29 complete a lap, in 28.4 s on average, and 3 touch a wall.
 
+`--tracks generated` trains on a pool of 16 generated tracks of difficulty 1 instead of `loop_corridor`, and `--eval` takes the same options. With the same 2.5M steps it did not do better. On 16 generated tracks that no policy saw (`--tracks generated --first-track-seed 1000`), the shipped policy covers 68% of a lap in an episode on average and touches a wall in 11 of 32 episodes. Two seeds trained on generated tracks cover 62% and 76% and touch a wall in 16 and 10, and on `loop_corridor` they touch a wall in 9 and 8 of 32 episodes, where the shipped policy touches one in 3. Most episodes on generated tracks end at 60 s before a lap: the tracks are longer than `loop_corridor`, and the V2 drives at about 1 m/s.
+
 ## In simulation
 
 `python3 -m examples.drive_v2` runs `driver.py` unchanged on the model through neoracer-mujoco's `racecar_core` adapter, which gives it the V2's spinning 1080-sample LiDAR and its hall encoder. There it drives `loop_corridor` without touching a wall:

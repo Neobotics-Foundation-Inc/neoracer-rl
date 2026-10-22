@@ -32,9 +32,9 @@ The policy has only driven in simulation. The model is fitted to one reference c
 python3 -m examples.train_v2 --total-steps 2500000 --seed 0 --out v2_policy.npz
 ```
 
-This took about 37 minutes with `--nthread 2`, on a 4-core machine that trained a second seed at the same time. Each episode drew the car's grip, mass, motor torque and steering stiffness from wide ranges (`PHYSICS` in `train_v2.py`). The policy saw the LiDAR as `racecar_core` gives it: the head turns about 7.4 times a second and measures each direction as it passes it, and `get_samples()` returns the last complete turn, so a range is up to two turns, 270 ms, old. It saw that with noise and lost beams, both held for the whole turn as `get_samples()` repeats it, the encoder reading between 5% low and 20% high, and, in half the episodes, its actions reaching the car a step late. Not every seed learns to lap: seed 1, trained the same way, learned to drive the wrong way round and never completed a lap.
+This took about 35 minutes with `--nthread 2`, on a 4-core machine that trained a second seed at the same time. Each episode drew the car's grip, mass, motor torque and steering stiffness from wide ranges, and the LiDAR's scan rate within 5% (`PHYSICS` in `train_v2.py`). The V2's model reads its LiDAR as `racecar_core` gives it: the head turns about 7.4 times a second and measures each direction as it passes it, and `get_samples()` returns the last complete turn, so a range is up to two turns, 270 ms, old. The trainer adds noise and lost beams, both held for the whole turn as `get_samples()` repeats it, the encoder reading between 5% low and 20% high, and, in half the episodes, actions that reach the car a step late. Seed 1, trained the same way, laps as well as seed 0.
 
-`python3 -m examples.train_v2 --eval examples/racecar_neo_v2/v2_policy.npz` drives 32 episodes of up to 60 s with the same random physics and sensing. 28 complete a lap, in 39.3 s on average, and 4 touch a wall.
+`python3 -m examples.train_v2 --eval examples/racecar_neo_v2/v2_policy.npz` drives 32 episodes of up to 60 s with the same random physics and sensing. 29 complete a lap, in 28.4 s on average, and 3 touch a wall.
 
 ## In simulation
 
@@ -42,9 +42,9 @@ This took about 37 minutes with `--nthread 2`, on a 4-core machine that trained 
 
 | Run | Laps | Wall contacts |
 | --- | --- | --- |
-| counterclockwise, 5 min | 8.2, 36 s a lap | 0 |
-| `--direction clockwise`, 2 min | 3.2 | 0 |
-| `--speed-limit 0.5`, 1 min | 1.5 | 0 |
-| `--speed-limit 0.25`, 1 min | 1.5 | 0 |
+| counterclockwise, 5 min | 10.6, 28 s a lap | 0 |
+| `--direction clockwise`, 2 min | 4.2 | 0 |
+| `--speed-limit 0.5`, 1 min | 1.9 | 0 |
+| `--speed-limit 0.25`, 1 min | 1.7 | 0 |
 
 If the car's `racecar_core` ignores `set_max_speed`, the car keeps its start max speed, 0.25, and drives like the last row.

@@ -151,7 +151,8 @@ def control(
 ) -> Driver:
     """The driver after an update dt (s) after the last, with the scan and
     the speed (m/s) the car gives then. It acts every CONTROL_PERIOD,
-    whatever the rate of the updates, and after a stall at once."""
+    whatever the rate of the updates. After a stall it acts at once and
+    next a full period later: it skips the actions it missed."""
     wait = driver.wait - dt
     if wait > 0.0:
         return replace(driver, wait=wait)
@@ -165,7 +166,8 @@ def control(
             action = act(policy, seen) * flip
         case _:
             assert_never(direction)
-    return Driver(action, max(wait + CONTROL_PERIOD, 0.0))
+    wait += CONTROL_PERIOD
+    return Driver(action, wait if wait > 0.0 else CONTROL_PERIOD)
 
 
 def command(policy: Policy, action: Action, speed_limit: float) -> tuple[float, float]:

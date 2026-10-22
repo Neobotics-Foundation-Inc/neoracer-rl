@@ -94,26 +94,54 @@ def test_driving_clockwise_is_the_mirror_of_driving_counterclockwise():
         np.testing.assert_allclose(cw.action, ccw.action * flip, atol=1e-12)
 
 
-def test_the_program_acts_once_a_control_period_whatever_its_update_rate():
-    # A policy whose action is its last action plus STEP, so that its action
-    # counts the times it acted.
-    step = 1e-3
+COUNT = 1e-3  # what _counting_policy adds to its action each time it acts
+
+
+def _counting_policy() -> policy.Policy:
+    """A policy whose action is its last action plus COUNT, so that its
+    action counts the times it acted."""
     weight = np.zeros((policy.OBS_DIM, 2))
     weight[-2:] = np.eye(2)  # the last action is the last two inputs
     zeros, ones = np.zeros(policy.OBS_DIM), np.ones(policy.OBS_DIM)
-    car = policy.Policy(
-        (policy.Layer(weight, np.full(2, step)),), zeros, ones, 1e9, 1.0
+    return policy.Policy(
+        (policy.Layer(weight, np.full(2, COUNT)),), zeros, ones, 1e9, 1.0
     )
+
+
+def _acts(driver: policy.Driver) -> int:
+    return round(driver.action[0] / COUNT)
+
+
+def test_the_program_acts_once_a_control_period_whatever_its_update_rate():
+    car = _counting_policy()
     scan = np.full(1080, 100.0)
     seconds = 3.0
     for dt in (1 / 360, 1 / 100, 1 / 60, 1 / 30, 0.1):
         driver = policy.START
         for _ in range(round(seconds / dt)):
             driver = policy.control(car, driver, dt, scan, 0.5, "counterclockwise")
-        acts = round(driver.action[0] / step)
-        # After a stall longer than a control period, it acts at once.
+        # Updates slower than a control period each act.
         expected = seconds / max(dt, policy.CONTROL_PERIOD)
-        assert abs(acts - expected) <= 1, (dt, acts, expected)
+        assert abs(_acts(driver) - expected) <= 1, (dt, _acts(driver), expected)
+
+
+def test_after_a_stall_the_program_acts_at_once_and_next_a_period_later():
+    car = _counting_policy()
+    scan = np.full(1080, 100.0)
+    for stall in (2 * policy.CONTROL_PERIOD, 0.1, 1.0):
+        for frame in (1e-3, 1 / 360, 1 / 100):
+            driver = policy.START
+            for dt in (frame, stall):
+                driver = policy.control(car, driver, dt, scan, 0.5, "counterclockwise")
+            assert _acts(driver) == 2, (stall, frame)
+            waited = 0.0
+            while _acts(driver) == 2:
+                driver = policy.control(
+                    car, driver, frame, scan, 0.5, "counterclockwise"
+                )
+                waited += frame
+            period = policy.CONTROL_PERIOD
+            assert period <= waited < period + frame, (stall, frame, waited)
 
 
 def test_an_action_is_within_its_limits_for_any_observation():

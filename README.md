@@ -29,12 +29,14 @@ The observation is twenty numbers:
 
 | Observation | |
 |---|---|
-| 0–7 | distances from eight fixed rangefinders at 0°, 45°, …, 315° counterclockwise from the front (m), -1 for no hit |
+| 0–7 | distances from the LiDAR at 0°, 45°, …, 315° counterclockwise from the front (m), -1 for no hit or a direction the car blocks |
 | 8–10 | acceleration (m/s²) |
 | 11–13 | rotation rate (rad/s) |
 | 14–17 | orientation quaternion |
 | 18 | steering angle (rad) |
 | 19 | speed from the motor encoder (m/s) |
+
+The distances are those of the last complete turn of the LiDAR's head, as its driver reports them, so a distance is up to two turns old. On the NeoRacer the car blocks the LiDAR's rear quarter, and the beam straight back reads -1.
 
 The speed is the mean speed of the four wheels, which is what the car's motor encoder measures. When a wheel slips, it differs from the true speed.
 

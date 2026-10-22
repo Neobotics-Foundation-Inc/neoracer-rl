@@ -2,18 +2,15 @@
 Train the RACECAR Neo V2's driving policy, racecar_neo_v2/policy.py, with PPO
 in the car's MuJoCo model on loop_corridor, or evaluate a trained one.
 
-The policy sees what the car's racecar_core shows a program. At each
-control step, NeoRacerBatch gives each car's true LiDAR ranges and wheel
-speed, and sense() turns them into what the car would show:
-- The LiDAR's head turns about 7.4 times a second and measures each
-  direction as it passes it, and racecar_core gives the last complete turn.
-  So each range is as the head saw it, up to two turns ago. Each episode
-  draws the time of a turn, the direction at which a turn begins, and when
-  the first turn ends. A range has noise, and a beam now and then reads no
-  return.
+The policy sees what the car's racecar_core shows a program. The V2's model
+reads its LiDAR beams as racecar_core reports them: a whole turn of the head
+at a time, up to two turns old (neoracer-mujoco's mjcf.beam_timing). Each
+episode draws the car's physics from PHYSICS, the LiDAR's scan rate among
+them. At each control step, sense() adds what the model does not have:
+- A range has noise, and a beam now and then reads no return. Both stay the
+  same until the beams show the next scan, as racecar_core repeats a scan.
 - The encoder reads the wheels' speed times a factor that each episode draws.
 - In some episodes, each action reaches the car a control step late.
-Each episode also draws the car's physics from PHYSICS.
 
 The network, the loss, the update and the observation statistics are those
 of train_ppo.py; the observation and the rollout are this file's. --eval
@@ -34,10 +31,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from neoracer_mujoco import assets, sensors
+from neoracer_mujoco import assets
 from neoracer_mujoco.physics import PhysicsRanges, Range
-from neoracer_mujoco.racecar_core_adapter import racecar_neo_v2_params
-from neoracer_spec.racecar_neo_v2 import RACECAR_NEO_V2
 
 from examples.racecar_neo_v2 import policy
 from examples.train_ppo import (
@@ -62,8 +57,6 @@ from neoracer_rl.envs import LoopCorridor, NeoRacerEnvConfig, neoracer_env
 from neoracer_rl.envs.neoracer_batch import REASONS, BatchState, Cpu, NeoRacerBatch
 
 CAR = os.path.join(assets.ASSET_DIR, "racecar_neo_v2.xml")
-TYRE_RADIUS = RACECAR_NEO_V2.wheel.diameter.value / 2.0  # m
-SCAN_RATE = racecar_neo_v2_params().lidar.scan_rate  # turns/s
 # The physics ranges of training: wide enough for the policy to drive a car
 # that differs from the model, not measured on the real car.
 PHYSICS = PhysicsRanges(
@@ -71,6 +64,7 @@ PHYSICS = PhysicsRanges(
     chassis_mass=Range(0.8, 1.3),
     motor_torque=Range(0.7, 1.4),
     steer_stiffness=Range(0.7, 1.4),
+    lidar_rate=Range(0.95, 1.05),
 )
 
 type Array = npt.NDArray[np.float64]
@@ -79,23 +73,16 @@ type EnvObservations = npt.NDArray[np.float32]  # (N, neoracer_env.OBS_DIM)
 
 @dataclass(frozen=True)
 class SensingParams:
-    """How the car shows the policy its LiDAR, its speed and its actions.
-    Each episode draws its own value from each range."""
+    """What the car shows the policy that the model does not: the noise of
+    its LiDAR, its encoder's error and its late actions. Each episode draws
+    its own value from each range."""
 
-    scan_period: tuple[float, float] = (0.95 / SCAN_RATE, 1.05 / SCAN_RATE)  # s
-    history: int = 10  # control steps of true ranges kept
     range_noise: float = 0.02  # m, the standard deviation of a range
     dropout: float = 0.02  # the chance that a beam reads no return
     speed_scale: Range = Range(0.95, 1.2)  # the encoder's speed over the wheels'
     late: float = 0.5  # the share of episodes whose actions arrive a step late
 
     def __post_init__(self) -> None:
-        low, high = self.scan_period
-        if not 0.0 < low <= high:
-            raise ValueError(f"scan_period needs 0 < low <= high, not {low, high}")
-        # A range is at most two turns old.
-        if (self.history - 1) * policy.CONTROL_PERIOD < 2.0 * high:
-            raise ValueError(f"history {self.history} holds less than two turns")
         if self.range_noise < 0.0:
             raise ValueError(f"range_noise must be >= 0, not {self.range_noise}")
         if not 0.0 <= self.dropout <= 1.0 or not 0.0 <= self.late <= 1.0:
@@ -106,19 +93,14 @@ class SensingParams:
 class Sensing:
     """What each car shows the policy, between two control steps."""
 
-    history: Array  # (N, history, beams) m, the true ranges, newest first
-    time: Array  # (N,) s since the car stood at its spawn
-    period: Array  # (N,) s, a turn of the LiDAR's head
-    first_turn: Array  # (N,) s, when the first turn ends, in [0, period)
-    passes: Array  # (N, beams) when in a turn the head passes each beam, in [0, 1)
+    scan: Array  # (N, beams) m, the model's last scan of true ranges
+    # racecar_core repeats a scan until the next, with its noise and its lost
+    # beams.
+    error: Array  # (N, beams) m, the noise of its ranges
+    lost: npt.NDArray[np.bool_]  # (N, beams) its beams with no return
     speed_scale: Array  # (N,)
     late: npt.NDArray[np.bool_]  # (N,) the car's actions arrive a step late
     last_action: Array  # (N, ACTION_DIM) the policy's last action, clipped
-    # racecar_core repeats the scan of a turn until the next turn ends, with
-    # its noise and its lost beams.
-    turn: Array  # (N,) the number of the last complete turn
-    error: Array  # (N, beams) m, the noise of its ranges
-    lost: npt.NDArray[np.bool_]  # (N, beams) its beams with no return
 
 
 def true_ranges(obs: EnvObservations) -> Array:
@@ -127,32 +109,20 @@ def true_ranges(obs: EnvObservations) -> Array:
 
 
 def wheel_speed(obs: EnvObservations) -> Array:
-    """The wheels' speed (N,) m/s. The env gives the encoder's turn rate
-    times the NeoRacer's wheel radius."""
-    speed = obs[:, neoracer_env.OBS_DIM - 1].astype(np.float64)
-    return speed * (TYRE_RADIUS / sensors.WHEEL_RADIUS)
+    """The wheels' speed (N,) m/s, from the env's observation."""
+    return obs[:, neoracer_env.OBS_DIM - 1].astype(np.float64)
 
 
 def start(params: SensingParams, ranges: Array, rng: np.random.Generator) -> Sensing:
-    """The sensing of cars that stood at their spawns, with ranges (N, beams)."""
+    """The sensing of cars at their spawns, whose beams read ranges (N, beams)."""
     n = ranges.shape[0]
-    period = rng.uniform(*params.scan_period, n)
-    # The head turns clockwise, and a turn begins at a random direction.
-    clockwise = (360.0 - np.array(policy.BEAM_DEGREES)) % 360.0
-    begin = rng.uniform(0.0, 360.0, (n, 1))
-    first_turn = rng.uniform(0.0, 1.0, n) * period
     return Sensing(
-        history=np.repeat(ranges[:, None], params.history, axis=1),
-        time=np.zeros(n),
-        period=period,
-        first_turn=first_turn,
-        passes=(clockwise - begin) % 360.0 / 360.0,
+        scan=ranges,
+        error=rng.normal(0.0, params.range_noise, ranges.shape),
+        lost=rng.random(ranges.shape) < params.dropout,
         speed_scale=rng.uniform(params.speed_scale.low, params.speed_scale.high, n),
         late=rng.random(n) < params.late,
         last_action=np.zeros((n, ACTION_DIM)),
-        turn=np.floor(-first_turn / period),
-        error=rng.normal(0.0, params.range_noise, ranges.shape),
-        lost=rng.random(ranges.shape) < params.dropout,
     )
 
 
@@ -172,17 +142,12 @@ def restart(
         return np.where(rows.reshape(-1, *[1] * (old.ndim - 1)), fresh, old)
 
     return Sensing(
-        history=pick(new.history, s.history),
-        time=pick(new.time, s.time),
-        period=pick(new.period, s.period),
-        first_turn=pick(new.first_turn, s.first_turn),
-        passes=pick(new.passes, s.passes),
+        scan=pick(new.scan, s.scan),
+        error=pick(new.error, s.error),
+        lost=pick(new.lost, s.lost),
         speed_scale=pick(new.speed_scale, s.speed_scale),
         late=pick(new.late, s.late),
         last_action=pick(new.last_action, s.last_action),
-        turn=pick(new.turn, s.turn),
-        error=pick(new.error, s.error),
-        lost=pick(new.lost, s.lost),
     )
 
 
@@ -194,24 +159,17 @@ def sense(
     rng: np.random.Generator,
 ) -> tuple[Sensing, policy.Observation]:
     """The sensing a control step later, and the policy's observations, from
-    the cars' true ranges (N, beams) m and wheel speeds (N,) m/s then."""
-    history = np.concatenate([ranges[:, None], s.history[:, :-1]], axis=1)
-    now = s.time + policy.CONTROL_PERIOD
-    # The end of the last complete turn, and when in it the head passed each beam.
-    turn = np.floor((now - s.first_turn) / s.period)
-    end = s.first_turn + turn * s.period
-    passed = end[:, None] - s.period[:, None] * (1.0 - s.passes)
-    lag = np.rint((now[:, None] - passed) / policy.CONTROL_PERIOD).astype(np.intp)
-    lag = np.clip(lag, 0, params.history - 1)
-    seen = history[np.arange(len(now))[:, None], lag, np.arange(ranges.shape[1])]
-    # A turn that has just ended brings new noise and lost beams.
-    new = (turn != s.turn)[:, None]
-    error = np.where(new, rng.normal(0.0, params.range_noise, seen.shape), s.error)
-    lost = np.where(new, rng.random(seen.shape) < params.dropout, s.lost)
+    the ranges (N, beams) m that the cars' beams read then and their wheel
+    speeds (N,) m/s."""
+    # The beams change when the LiDAR's head ends a turn: a new scan, with
+    # new noise and new lost beams.
+    new = np.any(ranges != s.scan, axis=1)[:, None]
+    error = np.where(new, rng.normal(0.0, params.range_noise, ranges.shape), s.error)
+    lost = np.where(new, rng.random(ranges.shape) < params.dropout, s.lost)
     scan = np.clip(
-        np.where(lost, policy.MAX_RANGE, seen + error), 0.0, policy.MAX_RANGE
+        np.where(lost, policy.MAX_RANGE, ranges + error), 0.0, policy.MAX_RANGE
     )
-    s = replace(s, history=history, time=now, turn=turn, error=error, lost=lost)
+    s = replace(s, scan=ranges, error=error, lost=lost)
     return s, policy.observation(scan, speed * s.speed_scale, s.last_action)
 
 

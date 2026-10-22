@@ -38,6 +38,7 @@ POLICY = policy.load(
 ENCODER = hasattr(rc.physics, "get_encoder_speed")
 
 driver = policy.START
+scan = policy.NO_SCAN
 
 
 def speed() -> float:
@@ -49,8 +50,8 @@ def speed() -> float:
 
 
 def start() -> None:
-    global driver
-    driver = policy.START
+    global driver, scan
+    driver, scan = policy.START, policy.NO_SCAN
     # The policy's throttle is the share of the car's full speed.
     rc.drive.set_max_speed(1.0)
     rc.drive.stop()
@@ -59,20 +60,20 @@ def start() -> None:
 
 
 def update() -> None:
-    global driver
+    global driver, scan
+    dt = rc.get_delta_time()
+    scan = policy.watch(scan, rc.lidar.get_samples(), dt)
     if REQUIRE_DEADMAN and not rc.controller.is_down(rc.controller.Button.RB):
         driver = policy.START
         rc.drive.stop()
         return
-    scan = rc.lidar.get_samples()
-    if len(scan) == 0:
-        # No scan yet, or none for now: the next scan gets a new action.
+    if len(scan.samples_cm) == 0 or policy.stale(scan):
+        # No scan yet, or the LiDAR has stopped: the next new scan gets a
+        # new action.
         driver = policy.START
         rc.drive.stop()
         return
-    driver = policy.control(
-        POLICY, driver, rc.get_delta_time(), scan, speed(), DIRECTION
-    )
+    driver = policy.control(POLICY, driver, dt, scan.samples_cm, speed(), DIRECTION)
     rc.drive.set_speed_angle(*policy.command(POLICY, driver.action, SPEED_LIMIT))
 
 

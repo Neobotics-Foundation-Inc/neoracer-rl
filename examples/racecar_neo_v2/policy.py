@@ -34,6 +34,10 @@ OBS_DIM = len(BEAM_DEGREES) + 3
 # The reference car's steady speed (m/s) at each throttle, from
 # neoracer_spec.racecar_neo_v2's Drive.steady_speed.
 STEADY_SPEED = ((0.0, 0.0), (0.25, 0.721), (0.5, 0.833), (1.0, 1.07))
+# A scan that has not changed for this long (s) is stale: the LiDAR has
+# stopped, and racecar_core repeats its last scan. The head turns in 0.135 s,
+# and a real scan's noise changes it every turn.
+STALE_SCAN = 0.5
 
 
 def ranges_from_scan(samples_cm: npt.ArrayLike) -> Ranges:
@@ -139,6 +143,31 @@ class Driver:
 
 
 START = Driver(action=np.zeros(2), wait=0.0)
+
+
+@dataclass(frozen=True)
+class Scan:
+    """The LiDAR's last scan and how long it has stayed the same."""
+
+    samples_cm: npt.NDArray[np.float64]
+    age: float  # s since it changed
+
+
+NO_SCAN = Scan(samples_cm=np.zeros(0), age=0.0)
+
+
+def watch(scan: Scan, samples_cm: npt.ArrayLike, dt: float) -> Scan:
+    """The scan after an update dt (s) after the last, when racecar_core
+    gives samples_cm."""
+    samples = np.array(samples_cm, dtype=np.float64)
+    if np.array_equal(samples, scan.samples_cm):
+        return replace(scan, age=scan.age + dt)
+    return Scan(samples, 0.0)
+
+
+def stale(scan: Scan) -> bool:
+    """Whether the LiDAR has stopped sending scans."""
+    return scan.age > STALE_SCAN
 
 
 def control(

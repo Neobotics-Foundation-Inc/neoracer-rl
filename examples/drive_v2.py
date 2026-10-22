@@ -45,7 +45,7 @@ class Drive:
 
 
 @contextlib.contextmanager
-def program_imports(rc: MujocoRacecar) -> Generator[None]:
+def program_imports(rc: object) -> Generator[None]:
     """In the block, `import racecar_core` gives a module whose
     create_racecar() returns rc, and the program's folder is first on
     sys.path, so it imports its own policy.py. On exit, sys.path and the
@@ -98,9 +98,9 @@ def drive(seconds: float, direction: policy.Direction, speed_limit: float) -> Dr
     angle = float(neoracer_env.angle_around_center(model, car, data.sensordata))
     turned, contacts, touching = 0.0, 0, False
 
-    def update() -> None:
+    def measure() -> None:
+        """Count the turn and the contacts up to the car's state now."""
         nonlocal angle, turned, contacts, touching
-        program["update"]()
         now = float(neoracer_env.angle_around_center(model, car, data.sensordata))
         turned += math.remainder(now - angle, 2.0 * math.pi)
         angle = now
@@ -109,8 +109,14 @@ def drive(seconds: float, direction: policy.Direction, speed_limit: float) -> Dr
             contacts += 1
         touching = touches
 
+    def update() -> None:
+        program["update"]()
+        measure()
+
     rc.set_start_update(program["start"], update, program["update_slow"])
     rc.go()
+    # go() returns with the sensors after the last step, which no update read.
+    measure()
     return Drive(laps=turned / (2.0 * math.pi), wall_contacts=contacts)
 
 

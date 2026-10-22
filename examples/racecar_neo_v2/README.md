@@ -16,7 +16,7 @@ Copy this folder next to the car's labs, so that the `racecar_core` library is t
 python3 driver.py
 ```
 
-Hold the right bumper while it drives, and release it to stop. The settings at the top of `driver.py`:
+Hold the right bumper while it drives, and release it to stop. The car also stops when the LiDAR's scan has not changed for half a second, as when the LiDAR stops sending (`racecar_core` then repeats its last scan), and drives again on the next scan. The settings at the top of `driver.py`:
 
 - `SPEED_LIMIT` is the share of the policy's throttle that the car gets. The car's speed controller holds 0.72 m/s at a quarter of full throttle, 0.83 m/s at half and 1.07 m/s at full.
 - `DIRECTION = "clockwise"` drives the other way round. The policy then sees the scan mirrored and steers mirrored, since the car is close to symmetric.

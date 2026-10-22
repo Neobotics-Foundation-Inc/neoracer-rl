@@ -7,10 +7,13 @@ its actions and its command, without the simulator.
 import ast
 import importlib.resources
 import itertools
+import runpy
+import types
 
 import numpy as np
 from neoracer_spec.racecar_neo_v2 import RACECAR_NEO_V2
 
+from examples import drive_v2
 from examples.racecar_neo_v2 import policy
 
 CAR_PYTHON = (3, 12)  # the RACECAR Neo V2's Ubuntu 24.04
@@ -142,6 +145,59 @@ def test_after_a_stall_the_program_acts_at_once_and_next_a_period_later():
                 )
                 waited += frame
             assert period <= waited < period + frame, (stall, frame, waited)
+
+
+class _Racecar:
+    """racecar_core as driver.py uses it: the LiDAR gives samples, and the
+    car records each command, None for a stop."""
+
+    DT = 1 / 60  # s, the time between two updates
+
+    def __init__(self) -> None:
+        self.samples = np.zeros(0, dtype=np.float32)
+        self.commands: list[tuple[float, float] | None] = []
+        self.drive = types.SimpleNamespace(
+            set_max_speed=lambda speed: None,
+            stop=lambda: self.commands.append(None),
+            set_speed_angle=lambda speed, angle: self.commands.append((speed, angle)),
+        )
+        self.lidar = types.SimpleNamespace(get_samples=lambda: self.samples)
+        self.physics = types.SimpleNamespace(get_encoder_speed=lambda: 0.5)
+        self.controller = types.SimpleNamespace(
+            Button=types.SimpleNamespace(RB=5), is_down=lambda button: True
+        )
+
+    def get_delta_time(self) -> float:
+        return self.DT
+
+
+def test_the_car_stops_when_the_lidar_stops_and_drives_on_its_next_scan():
+    rng = np.random.default_rng(5)
+    rc = _Racecar()
+    with drive_v2.program_imports(rc):
+        program = runpy.run_path(str(drive_v2.PROGRAM), run_name="driver")
+    program["start"]()
+
+    def drives(new_scan: bool) -> bool:
+        """Whether the car drives after an update."""
+        if new_scan:
+            rc.samples = rng.uniform(50.0, 500.0, 1080).astype(np.float32)
+        program["update"]()
+        return rc.commands[-1] is not None
+
+    # A new scan every 8 updates, a turn of the head.
+    assert all(drives(k % 8 == 0) for k in range(60))
+    assert drives(new_scan=True)
+    # The LiDAR stops, and racecar_core repeats its last scan.
+    for k in range(1, 61):
+        age = k * rc.DT
+        if age < policy.STALE_SCAN - rc.DT / 2:
+            assert drives(new_scan=False), age
+        elif age > policy.STALE_SCAN + rc.DT / 2:
+            assert not drives(new_scan=False), age
+        else:
+            drives(new_scan=False)
+    assert drives(new_scan=True)
 
 
 def test_an_action_is_within_its_limits_for_any_observation():

@@ -16,7 +16,11 @@ from examples.racecar_neo_v2 import policy
 from examples.train_ppo import (
     ObsStats,
     PPOParams,
+    RolloutState,
+    collect_rollout,
+    empty_obs_stats,
     greedy_action,
+    init_actor_critic,
     init_opt_state,
     load_policy,
     normalize_obs,
@@ -25,11 +29,9 @@ from examples.train_ppo import (
 from examples.train_v2 import (
     CAR,
     PHYSICS,
-    RolloutState,
+    RacecarCore,
     SensingParams,
-    collect_rollout,
     delay,
-    init_net,
     restart,
     save_policy,
     sense,
@@ -135,7 +137,7 @@ def test_sensing_params_reject_values_outside_their_domain():
 def test_the_car_acts_as_the_trained_networks_mean_action(tmp_path):
     params = PPOParams()
     config = NeoRacerEnvConfig(car_path=CAR, throttle_scale=0.7)
-    net = init_net(jax.random.key(0), params)
+    net = init_actor_critic(jax.random.key(0), params, policy.OBS_DIM)
     # A network whose output layer is not the near-zero one of the start.
     net = replace(net, actor=jax.tree.map(lambda x: 100.0 * x, net.actor))
     rng = np.random.default_rng(4)
@@ -160,22 +162,22 @@ def test_the_car_acts_as_the_trained_networks_mean_action(tmp_path):
 
 def test_a_short_training_run_on_the_v2_changes_the_params_and_keeps_them_finite():
     params = PPOParams(rollout_steps=64, epochs=2, minibatches=2, hidden=(16,))
-    sensing = SensingParams()
+    interface = RacecarCore(SensingParams())
     config = NeoRacerEnvConfig(car_path=CAR, physics=PHYSICS)
     env = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
     rng = np.random.default_rng(5)
     env_state = env.reset(rng)
     state = RolloutState(
         env_state,
-        start(sensing, true_ranges(env_state.obs), rng),
         np.zeros(2),
         np.zeros(2, dtype=np.int64),
-        ObsStats(np.zeros(policy.OBS_DIM), np.ones(policy.OBS_DIM), 0.0),
+        empty_obs_stats(policy.OBS_DIM),
+        interface.start(env_state.obs, rng),
     )
-    net = init_net(jax.random.key(1), params)
+    net = init_actor_critic(jax.random.key(1), params, policy.OBS_DIM)
     opt_state = init_opt_state(net, params)
     batch, state, _ = collect_rollout(
-        env, state, net, jax.random.key(2), params, sensing, rng
+        env, state, net, jax.random.key(2), params, interface, rng
     )
     env.close()
     new, _, info = ppo_update(net, opt_state, batch, jax.random.key(3), params)

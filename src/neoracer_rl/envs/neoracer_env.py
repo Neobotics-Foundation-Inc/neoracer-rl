@@ -26,14 +26,18 @@ Action space -- Box([-1,-1],[1,1]), float32:
 
 Observation space -- Box(20,), float32, built only from sensors.SensorReadings
 (no raw qpos/qvel):
-    [0:8]   lidar_ranges   m, -1 = no hit (sensors.lidar_ranges)
+    [0:8]   lidar_ranges   m, -1 = no hit or a bearing the car blocks
+            (sensors.lidar_ranges). The model's beams read as the LiDAR's
+            driver reports them: the last complete turn of its head, so a
+            range is up to two turns old.
     [8:11]  imu_accel      m/s^2, body frame, gravity included
     [11:14] imu_gyro       rad/s, body frame
     [14:18] imu_quat       orientation quaternion (w,x,y,z), world frame
     [18]    steer_cmd_pos  rad, virtual steering input
     [19]    estimated_speed  m/s, from motor_encoder_rad_s: the mean of the
-            4 wheel speeds, like the one drive motor of the real car. It is
-            not the true speed imu_linvel.
+            4 wheel speeds, like the one drive motor of the real car, at the
+            car's wheel radius (contract.wheel_radius). It is not the true
+            speed imu_linvel.
 
 Control rate: 30 Hz, the target LiDAR scan rate of the real hardware.
 __init__ computes the physics steps per action from model.opt.timestep.
@@ -360,7 +364,7 @@ def observation(
     def read(*sensors: mujoco.MjsSensor) -> SensorData:
         return np.concatenate([batch.read(model, sensordata, x) for x in sensors], -1)
 
-    lidar = read(
+    beams = (
         s.lidar_000,
         s.lidar_045,
         s.lidar_090,
@@ -370,12 +374,15 @@ def observation(
         s.lidar_270,
         s.lidar_315,
     )
+    # A beam that the car blocks reads no return, as sensors.read gives it.
+    blocked = np.array([beam.name in s.blocked for beam in beams])
+    lidar = np.where(blocked, sensors.NO_RETURN, read(*beams))
     wheels = read(s.fl_wheel_vel, s.fr_wheel_vel, s.rl_wheel_vel, s.rr_wheel_vel)
     # The mean wheel speed (rad/s) is sensors.motor_encoder_rad_s, the reading
-    # of the car's one motor encoder, and the speed (m/s) is
-    # sensors.estimated_linear_speed_ms of it.
+    # of the car's one motor encoder, and the speed (m/s) is that times the
+    # car's wheel radius.
     motor = (wheels[..., 0] + wheels[..., 1] + wheels[..., 2] + wheels[..., 3]) / 4
-    speed = (motor * sensors.WHEEL_RADIUS)[..., None]
+    speed = (motor * contract.wheel_radius(model, car))[..., None]
     parts = (lidar, read(s.imu_accel, s.imu_gyro, s.imu_quat, s.steer_cmd_pos), speed)
     return np.concatenate([p.astype(np.float32) for p in parts], -1)
 

@@ -1,6 +1,6 @@
 """
-Laws for the V2's trainer, examples/train_v2.py: the LiDAR as racecar_core
-gives it, the encoder and the late actions, a saved policy as the car loads
+Laws for the V2's trainer, examples/train_v2.py: the model's LiDAR as
+racecar_core gives it, its noise, the encoder and the late actions, a saved policy as the car loads
 it, and a short training run on the V2's model.
 """
 
@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from neoracer_mujoco.racecar_core_adapter import racecar_neo_v2_params
 
 from examples.racecar_neo_v2 import policy
 from examples.train_ppo import (
@@ -39,37 +40,30 @@ from neoracer_rl.envs import NeoRacerEnvConfig
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
 
 BEAMS = len(policy.BEAM_DEGREES)
-EXACT = SensingParams(range_noise=0.0, dropout=0.0)  # the ranges as the head saw them
+EXACT = SensingParams(range_noise=0.0, dropout=0.0)  # the model's ranges as they are
 
 
-def test_racecar_core_gives_a_whole_turn_at_once_at_most_two_turns_old():
-    cars, steps, cp = 16, 300, policy.CONTROL_PERIOD
-
-    # The true range of beam b at step k is 0.01 k + 0.001 b, so a range
-    # tells when the head saw it.
-    def true(k: int) -> np.ndarray:
-        return np.tile(0.01 * k + 0.001 * np.arange(BEAMS), (cars, 1))
-
-    rng = np.random.default_rng(0)
-    s = start(EXACT, true(0), rng)
-    seen_before = np.zeros((cars, BEAMS), dtype=np.intp)
-    changes: list[list[int]] = [[] for _ in range(cars)]
-    for k in range(1, steps):
-        s, obs = sense(EXACT, s, true(k), np.zeros(cars), rng)
-        seen = np.rint((obs[:, :BEAMS] - 0.001 * np.arange(BEAMS)) / 0.01)
-        age = (k - seen) * cp  # s
-        assert np.all(age >= 0.0)
-        assert np.all(age <= 2.0 * s.period[:, None] + cp / 2)
-        # In the first two turns, some beams still read the car standing at
-        # its spawn. Then every beam changes when a turn ends, and none between.
-        changed = (seen != seen_before)[k * cp > 2.0 * s.period]
-        assert np.all(changed.all(axis=1) | ~changed.any(axis=1))
-        for i in np.flatnonzero((seen != seen_before).all(axis=1)):
-            changes[i].append(k)
-        seen_before = seen
-    for i in range(cars):
-        gaps = np.diff(changes[i][1:]) * cp
-        assert np.all(np.abs(gaps - s.period[i]) <= cp), (i, gaps, s.period[i])
+def test_the_v2s_beams_show_a_new_scan_once_a_turn_of_the_head():
+    """Through NeoRacerBatch, the V2 model's beams change all at once, about
+    7.4 times a second: the batch keeps the beams' history from step to step,
+    and a beam reads the last complete turn."""
+    seconds = 3.0
+    config = NeoRacerEnvConfig(car_path=CAR)
+    env = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
+    state = env.reset(np.random.default_rng(7))
+    ranges = true_ranges(state.obs)
+    scans = np.zeros(2, dtype=np.int64)
+    for _ in range(round(seconds / policy.CONTROL_PERIOD)):
+        state, _ = env.step(state, np.tile([0.5, 0.2], (2, 1)))
+        now = true_ranges(state.obs)
+        changed = now != ranges
+        # A turn shows within a physics step on every beam, so almost always
+        # in one control step.
+        scans += changed.sum(axis=1) >= len(policy.BEAM_DEGREES) - 1
+        ranges = now
+    env.close()
+    scan_rate = racecar_neo_v2_params().lidar.scan_rate  # turns/s
+    np.testing.assert_allclose(scans, seconds * scan_rate, atol=2)
 
 
 def test_the_policy_sees_the_scaled_wheel_speed_and_its_own_last_action():
@@ -85,18 +79,20 @@ def test_the_policy_sees_the_scaled_wheel_speed_and_its_own_last_action():
     assert np.all(np.abs(s.last_action) <= 1.0)
 
 
-def test_a_scan_keeps_its_noise_and_lost_beams_until_its_turn_ends():
+def test_a_scan_keeps_its_noise_and_lost_beams_until_the_beams_change():
     cars = 16
     rng = np.random.default_rng(6)
     params = SensingParams(dropout=0.2)
-    ranges = rng.uniform(0.5, 4.0, (cars, BEAMS))  # a still scene
+    ranges = rng.uniform(0.5, 4.0, (cars, BEAMS))
     s = start(params, ranges, rng)
     s, before = sense(params, s, ranges, np.zeros(cars), rng)
-    for _ in range(100):
-        turn = s.turn
+    for k in range(100):
+        # The beams show a new scan every 4 control steps.
+        if k % 4 == 0:
+            ranges = rng.uniform(0.5, 4.0, (cars, BEAMS))
         s, obs = sense(params, s, ranges, np.zeros(cars), rng)
         same = np.all(obs[:, :BEAMS] == before[:, :BEAMS], axis=1)
-        np.testing.assert_array_equal(same, s.turn == turn)
+        np.testing.assert_array_equal(same, k % 4 != 0)
         before = obs
 
 
@@ -124,15 +120,10 @@ def test_a_restart_changes_only_the_cars_that_start_over():
     for name in s.__dataclass_fields__:
         before, after = getattr(s, name), getattr(r, name)
         np.testing.assert_array_equal(after[~rows], before[~rows], err_msg=name)
-    np.testing.assert_array_equal(r.time[rows], 0.0)
-    np.testing.assert_array_equal(r.history[rows], np.repeat(ranges[rows, None], 10, 1))
+    np.testing.assert_array_equal(r.scan[rows], ranges[rows])
 
 
 def test_sensing_params_reject_values_outside_their_domain():
-    with pytest.raises(ValueError, match="scan_period"):
-        SensingParams(scan_period=(0.2, 0.1))
-    with pytest.raises(ValueError, match="history"):
-        SensingParams(history=5)  # less than two turns
     with pytest.raises(ValueError, match="range_noise"):
         SensingParams(range_noise=-0.01)
     with pytest.raises(ValueError, match="dropout"):

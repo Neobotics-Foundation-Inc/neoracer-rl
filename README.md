@@ -127,12 +127,14 @@ python -m examples.train_ppo --eval ppo.npz --episodes 20
 
 `--random-physics` trains with random physics, `--tracks generated` on generated tracks, and `--backend warp` on a GPU. [EXPERIMENTS.md](EXPERIMENTS.md) has the results. For example, every seed trained on 16 generated tracks laps tracks it never saw. Most seeds trained on `loop_corridor` alone never get past its first corner.
 
+`examples/train_v2.py` trains a policy for another car, MIT's RACECAR Neo V2, on what that car's `racecar_core` library shows a program: a LiDAR scan up to two turns of its head old, and its encoder's speed. [examples/racecar_neo_v2](examples/racecar_neo_v2/README.md) holds the program that drives the real car with it.
+
 ## Where the code lives
 
 - `src/neoracer_rl/envs/neoracer_env.py` has `NeoRacerEnv` and the functions that define the task: the observation, progress, termination and reward.
 - `src/neoracer_rl/envs/neoracer_batch.py` has `NeoRacerBatch` and the array versions of those functions.
 - A new part of the task, such as another reward term, goes in `neoracer_env.py` as a function that both the env and the batch can use. Physics and sensors belong in neoracer-mujoco.
-- `examples/` has `train_ppo.py`, and `random_actions.py`, which checks that the environment works.
+- `examples/` has `train_ppo.py`; `random_actions.py`, which checks that the environment works; and the RACECAR Neo V2's policy: `train_v2.py`, `drive_v2.py` and `racecar_neo_v2/`.
 - `validation/` has the tests, and `users/<github-name>/` personal experiments.
 
 ## Setup

@@ -66,6 +66,8 @@ def update() -> None:
         return
     scan = rc.lidar.get_samples()
     if len(scan) == 0:
+        # No scan yet, or none for now: the next scan gets a new action.
+        driver = policy.START
         rc.drive.stop()
         return
     driver = policy.control(

@@ -114,6 +114,11 @@ class Sensing:
     speed_scale: Array  # (N,)
     late: npt.NDArray[np.bool_]  # (N,) the car's actions arrive a step late
     last_action: Array  # (N, ACTION_DIM) the policy's last action, clipped
+    # racecar_core repeats the scan of a turn until the next turn ends, with
+    # its noise and its lost beams.
+    turn: Array  # (N,) the number of the last complete turn
+    error: Array  # (N, beams) m, the noise of its ranges
+    lost: npt.NDArray[np.bool_]  # (N, beams) its beams with no return
 
 
 def true_ranges(obs: EnvObservations) -> Array:
@@ -135,15 +140,19 @@ def start(params: SensingParams, ranges: Array, rng: np.random.Generator) -> Sen
     # The head turns clockwise, and a turn begins at a random direction.
     clockwise = (360.0 - np.array(policy.BEAM_DEGREES)) % 360.0
     begin = rng.uniform(0.0, 360.0, (n, 1))
+    first_turn = rng.uniform(0.0, 1.0, n) * period
     return Sensing(
         history=np.repeat(ranges[:, None], params.history, axis=1),
         time=np.zeros(n),
         period=period,
-        first_turn=rng.uniform(0.0, 1.0, n) * period,
+        first_turn=first_turn,
         passes=(clockwise - begin) % 360.0 / 360.0,
         speed_scale=rng.uniform(params.speed_scale.low, params.speed_scale.high, n),
         late=rng.random(n) < params.late,
         last_action=np.zeros((n, ACTION_DIM)),
+        turn=np.floor(-first_turn / period),
+        error=rng.normal(0.0, params.range_noise, ranges.shape),
+        lost=rng.random(ranges.shape) < params.dropout,
     )
 
 
@@ -171,6 +180,9 @@ def restart(
         speed_scale=pick(new.speed_scale, s.speed_scale),
         late=pick(new.late, s.late),
         last_action=pick(new.last_action, s.last_action),
+        turn=pick(new.turn, s.turn),
+        error=pick(new.error, s.error),
+        lost=pick(new.lost, s.lost),
     )
 
 
@@ -186,15 +198,20 @@ def sense(
     history = np.concatenate([ranges[:, None], s.history[:, :-1]], axis=1)
     now = s.time + policy.CONTROL_PERIOD
     # The end of the last complete turn, and when in it the head passed each beam.
-    end = s.first_turn + np.floor((now - s.first_turn) / s.period) * s.period
+    turn = np.floor((now - s.first_turn) / s.period)
+    end = s.first_turn + turn * s.period
     passed = end[:, None] - s.period[:, None] * (1.0 - s.passes)
     lag = np.rint((now[:, None] - passed) / policy.CONTROL_PERIOD).astype(np.intp)
     lag = np.clip(lag, 0, params.history - 1)
     seen = history[np.arange(len(now))[:, None], lag, np.arange(ranges.shape[1])]
-    noisy = seen + rng.normal(0.0, params.range_noise, seen.shape)
-    lost = rng.random(seen.shape) < params.dropout
-    scan = np.clip(np.where(lost, policy.MAX_RANGE, noisy), 0.0, policy.MAX_RANGE)
-    s = replace(s, history=history, time=now)
+    # A turn that has just ended brings new noise and lost beams.
+    new = (turn != s.turn)[:, None]
+    error = np.where(new, rng.normal(0.0, params.range_noise, seen.shape), s.error)
+    lost = np.where(new, rng.random(seen.shape) < params.dropout, s.lost)
+    scan = np.clip(
+        np.where(lost, policy.MAX_RANGE, seen + error), 0.0, policy.MAX_RANGE
+    )
+    s = replace(s, history=history, time=now, turn=turn, error=error, lost=lost)
     return s, policy.observation(scan, speed * s.speed_scale, s.last_action)
 
 
@@ -437,13 +454,15 @@ def main() -> None:
     config = NeoRacerEnvConfig(car_path=CAR, tracks=LoopCorridor(), physics=PHYSICS)
 
     if args.eval is not None:
+        car = policy.load(args.eval)
         results = evaluate(
-            policy.load(args.eval),
+            car,
             sensing_params,
             args.episodes,
             args.seed + 10_000,
             args.nthread,
-            config,
+            # The throttle that action 1 commands, as on the car.
+            replace(config, throttle_scale=car.throttle_scale),
         )
         laps = [
             r.steps * policy.CONTROL_PERIOD

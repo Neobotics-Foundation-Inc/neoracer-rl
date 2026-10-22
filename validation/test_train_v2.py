@@ -85,6 +85,21 @@ def test_the_policy_sees_the_scaled_wheel_speed_and_its_own_last_action():
     assert np.all(np.abs(s.last_action) <= 1.0)
 
 
+def test_a_scan_keeps_its_noise_and_lost_beams_until_its_turn_ends():
+    cars = 16
+    rng = np.random.default_rng(6)
+    params = SensingParams(dropout=0.2)
+    ranges = rng.uniform(0.5, 4.0, (cars, BEAMS))  # a still scene
+    s = start(params, ranges, rng)
+    s, before = sense(params, s, ranges, np.zeros(cars), rng)
+    for _ in range(100):
+        turn = s.turn
+        s, obs = sense(params, s, ranges, np.zeros(cars), rng)
+        same = np.all(obs[:, :BEAMS] == before[:, :BEAMS], axis=1)
+        np.testing.assert_array_equal(same, s.turn == turn)
+        before = obs
+
+
 def test_a_late_car_gets_the_last_action_and_an_on_time_car_the_new_one():
     rng = np.random.default_rng(2)
     s = start(SensingParams(late=0.5), rng.uniform(0.2, 4.0, (64, BEAMS)), rng)

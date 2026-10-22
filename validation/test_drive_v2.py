@@ -14,6 +14,6 @@ def test_the_shipped_policy_laps_both_ways_without_touching_a_wall():
         ("clockwise", -1.0),
     )
     for direction, sign in ways:
-        result = drive_v2.drive(40.0, direction, speed_limit=1.0)
+        result = drive_v2.drive(60.0, direction, speed_limit=1.0)
         assert result.wall_contacts == 0, (direction, result)
-        assert sign * result.laps > 1.2, (direction, result)
+        assert sign * result.laps > 1.5, (direction, result)

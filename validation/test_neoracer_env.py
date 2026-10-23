@@ -10,8 +10,8 @@ many random inputs. Two env tests then check that step() uses them.
 
 import os
 import pickle
+import re
 from collections.abc import Mapping
-from pathlib import Path
 from types import MappingProxyType
 
 import mujoco
@@ -19,10 +19,11 @@ import numpy as np
 import pytest
 from gymnasium import spaces
 from gymnasium.utils.env_checker import check_env
-from neoracer_mujoco import assets, sim
+from neoracer_mujoco import assets, export, sim
 from neoracer_mujoco.physics import PhysicsRanges, Range
 from neoracer_mujoco.track_generation import Track
 from neoracer_mujoco.track_generation.mjcf import to_start_frame
+from neoracer_spec.neoracer import NEORACER
 
 from neoracer_rl.envs import (
     GeneratedTracks,
@@ -55,8 +56,7 @@ def env():
 def test_env_rejects_a_car_without_a_free_joint(tmp_path):
     """__init__ parses the car's free joint once. A car without one fails
     there with a clear error, not later in reset()."""
-    xml = Path(assets.DEFAULT_CAR).read_text()
-    xml = xml.replace("<freejoint/>", "").replace(
+    xml = re.sub(r"<freejoint\s*/>", "", export.car_xml(NEORACER)).replace(
         'file="meshes/', f'file="{os.path.join(assets.ASSET_DIR, "meshes")}/'
     )
     car = tmp_path / "no_freejoint.xml"

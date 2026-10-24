@@ -42,8 +42,10 @@ PROGRAM = Path(str(importlib.resources.files("examples.racecar_neo_v2") / "drive
 class Drive:
     """What the car did."""
 
-    laps: float  # turns around the loop's center, + counterclockwise
-    wall_contacts: int  # the times the car began to touch a wall
+    laps: float
+    """Turns around the loop's center, + counterclockwise."""
+    wall_contacts: int
+    """The times the car began to touch a wall."""
 
 
 @contextlib.contextmanager

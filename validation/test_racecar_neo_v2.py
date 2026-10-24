@@ -17,7 +17,8 @@ from neoracer_spec.racecar_neo_v2 import RACECAR_NEO_V2
 from examples import drive_v2
 from examples.racecar_neo_v2 import policy
 
-CAR_PYTHON = (3, 12)  # the RACECAR Neo V2's Ubuntu 24.04
+CAR_PYTHON = (3, 12)
+"""The Python of the RACECAR Neo V2's Ubuntu 24.04."""
 
 
 def _random_policy(seed: int) -> policy.Policy:
@@ -98,7 +99,8 @@ def test_driving_clockwise_is_the_mirror_of_driving_counterclockwise():
         np.testing.assert_allclose(cw.action, ccw.action * flip, atol=1e-12)
 
 
-COUNT = 1e-3  # what _counting_policy adds to its action each time it acts
+COUNT = 1e-3
+"""What _counting_policy adds to its action each time it acts."""
 
 
 def _counting_policy() -> policy.Policy:

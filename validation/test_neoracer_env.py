@@ -43,7 +43,8 @@ from neoracer_rl.envs import (
 )
 from neoracer_rl.envs.neoracer_env import arenas, lap_angle
 
-LAP = 2.0 * np.pi  # rad, one full lap of progress
+LAP = 2.0 * np.pi
+"""One full lap of progress (rad)."""
 
 
 @pytest.fixture

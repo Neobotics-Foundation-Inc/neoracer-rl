@@ -131,7 +131,7 @@ python -m examples.train_ppo --total-steps 400000 --seed 1 --out ppo.npz
 python -m examples.train_ppo --eval ppo.npz --episodes 20
 ```
 
-`--random-physics` trains with random physics, `--tracks generated` on generated tracks, and `--backend warp` on a GPU. [EXPERIMENTS.md](EXPERIMENTS.md) has the results. For example, every seed trained on 16 generated tracks laps tracks it never saw. Most seeds trained on `loop_corridor` alone never get past its first corner.
+`--random-physics` trains with random physics, `--tracks generated` on generated tracks, and `--backend warp` on a GPU. [EXPERIMENTS.md](EXPERIMENTS.md) has the results. For example, two of three seeds trained on 16 generated tracks lap tracks they never saw. Most seeds trained on `loop_corridor` alone never finish a lap; seed 1, above, does.
 
 `examples/train_v2.py` trains a policy for another car, MIT's RACECAR Neo V2, on what that car's `racecar_core` library shows a program: a LiDAR scan up to two turns of its head old, and its encoder's speed. [examples/racecar_neo_v2](examples/racecar_neo_v2/README.md) holds the program that drives the real car with it.
 

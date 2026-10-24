@@ -87,7 +87,7 @@ def drive(
             # Turn the car to face -X, then let its suspension settle again.
             data.bind_scalar(car.joint).qpos[3:7] = (0.0, 0.0, 0.0, 1.0)
             mujoco.mj_forward(model, data)
-            for _ in range(config.spawn.resettle_steps):
+            for _ in range(sim.steps_in(config.spawn.resettle, model.opt.timestep)):
                 mujoco.mj_step(model, data)
         case _:
             assert_never(direction)

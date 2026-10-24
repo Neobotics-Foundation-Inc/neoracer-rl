@@ -88,6 +88,7 @@ from neoracer_mujoco import assets, batch, collision, contract, physics, sensors
 from neoracer_mujoco.control.steering import ControlCommand
 from neoracer_mujoco.physics import PhysicsRanges
 from neoracer_mujoco.scene import Car, Scene
+from neoracer_mujoco.sim import SpawnRange
 from neoracer_mujoco.track_generation import (
     Difficulty,
     NoValidTrack,
@@ -100,14 +101,9 @@ from neoracer_mujoco.track_generation import (
     to_spec,
 )
 
-# The spawn offset, the progress around the world origin, the lap and the
-# reward are specific to the geometry of this one track.
+# The progress around the world origin, the lap and the reward are specific
+# to the geometry of this one track.
 _TRACK = os.path.join(assets.TRACK_DIR, "loop_corridor.xml")
-
-# Spawn offset (m) on loop_corridor.xml: its outer wall is at y=-3 and its
-# inner wall at y=-2, so the 1.0 m wide bottom straight is centered at
-# y=-2.5. At the origin, the car would spawn inside the inner wall.
-_LOOP_SPAWN_OFFSET = (0.0, -2.5, 0.0)
 
 # The wall boxes of a generated track: more than the 161 that any of 240
 # tracks needed, so that every track of a pool has the same sizes, as a batch
@@ -136,16 +132,6 @@ class EnvInfo(TypedDict):
     termination_reason: TerminationReason | None
 
 
-def _compose_yaw_perturbation(q: np.ndarray, yaw: float) -> np.ndarray:
-    """q * dq, where dq is a rotation of yaw (rad) about +Z. q and the
-    result are quaternions (w, x, y, z)."""
-    half = yaw / 2.0
-    dq = np.array([np.cos(half), 0.0, 0.0, np.sin(half)])
-    out = np.empty(4)
-    mujoco.mju_mulQuat(out, q, dq)
-    return out
-
-
 @dataclass(frozen=True)
 class RewardConfig:
     """Reward weights. Nobody has tuned them yet. See the module docstring for
@@ -159,18 +145,6 @@ class RewardConfig:
     crash_penalty: float = 5.0
     stuck_penalty: float = 5.0
     lap_bonus: float = 10.0  # one-time bonus on successful lap completion
-
-
-@dataclass(frozen=True)
-class SpawnRange:
-    """Bounds of the random spawn perturbation at reset(). Each value is
-    sampled uniformly in [-bound, +bound]."""
-
-    lateral_m: float = 0.15  # m, along world Y
-    yaw_rad: float = 0.15  # rad, about +Z
-    resettle_steps: int = (
-        50  # physics steps after the perturbation, to settle the suspension
-    )
 
 
 @dataclass(frozen=True)
@@ -306,16 +280,13 @@ def lap_angle(arena: Arena, sensordata: SensorData) -> npt.NDArray[np.float64]:
 
 
 def loop_scene(config: NeoRacerEnvConfig, visuals: bool) -> Scene:
-    """The car of config on loop_corridor.xml, at the spawn position. Without
+    """The car of config on loop_corridor.xml, at the track's start. Without
     visuals, the car's meshes are left out: the physics and the sensors are
     the same, and the model is smaller and faster (assets.compose)."""
     # compose raises ValueError if the car has no free joint or misses an
     # actuator or sensor.
     return assets.compose(
-        mujoco.MjSpec.from_file(_TRACK),
-        config.car_path,
-        _LOOP_SPAWN_OFFSET,
-        visuals=visuals,
+        mujoco.MjSpec.from_file(_TRACK), config.car_path, visuals=visuals
     )
 
 
@@ -395,27 +366,6 @@ def angle_around_center(
     center of the loop, shape (...,)."""
     pos = batch.read(model, sensordata, car.truth.pos)
     return np.arctan2(pos[..., 1], pos[..., 0])
-
-
-def apply_spawn_offset(
-    model: mujoco.MjModel,
-    data: mujoco.MjData,
-    car: Car,
-    spawn: SpawnRange,
-    rng: np.random.Generator,
-) -> None:
-    """Move the car in data sideways and turn it, by random amounts within
-    spawn, then step spawn.resettle_steps physics steps to settle the
-    suspension."""
-    lateral = float(rng.uniform(-spawn.lateral_m, spawn.lateral_m))
-    yaw = float(rng.uniform(-spawn.yaw_rad, spawn.yaw_rad))
-    # The car's free joint in qpos, a view: (x, y, z, qw, qx, qy, qz).
-    qpos = data.bind_scalar(car.joint).qpos
-    qpos[1] += lateral
-    qpos[3:7] = _compose_yaw_perturbation(qpos[3:7], yaw)
-    mujoco.mj_forward(model, data)
-    for _ in range(spawn.resettle_steps):
-        mujoco.mj_step(model, data)
 
 
 @dataclass(frozen=True)
@@ -585,10 +535,9 @@ class NeoRacerEnv(gym.Env):
             self.scene, self._car = self._arena.scene, self._arena.scene.car
             self.model = copy.deepcopy(self.scene.model)
         nominal = self.scene.model
-        mujoco.mj_resetData(nominal, self.data)
-        sim.apply_ctrl_and_step(nominal, self.data, 0.0, sim.SETTLE_STEPS)
-        apply_spawn_offset(
-            nominal, self.data, self._car, self.config.spawn, self.np_random
+        sim.settle(nominal, self.data)
+        sim.perturb_spawn(
+            nominal, self.data, self._car, self.np_random, self.config.spawn
         )
         self.physics = physics.sample(self.config.physics, self.np_random)
         physics.apply_physics(self.model, self.scene, self.physics)

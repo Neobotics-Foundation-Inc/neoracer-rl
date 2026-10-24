@@ -48,7 +48,8 @@ EXACT = SensingParams(range_noise=0.0, dropout=0.0)  # the model's ranges as the
 def test_the_v2s_beams_show_a_new_scan_once_a_turn_of_the_head():
     """Through NeoRacerBatch, the V2 model's beams change all at once, about
     7.4 times a second: the batch keeps the beams' history from step to step,
-    and a beam reads the last complete turn."""
+    and a beam reads the last complete turn. A row whose episode ends starts
+    over, which changes its beams too, so the count leaves out those steps."""
     seconds = 3.0
     config = NeoRacerEnvConfig(car_path=CAR)
     env = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
@@ -56,12 +57,12 @@ def test_the_v2s_beams_show_a_new_scan_once_a_turn_of_the_head():
     ranges = true_ranges(state.obs)
     scans = np.zeros(2, dtype=np.int64)
     for _ in range(round(seconds / policy.CONTROL_PERIOD)):
-        state, _ = env.step(state, np.tile([0.5, 0.2], (2, 1)))
+        state, out = env.step(state, np.tile([0.5, 0.2], (2, 1)))
         now = true_ranges(state.obs)
         changed = now != ranges
         # A turn shows within a physics step on every beam, so almost always
         # in one control step.
-        scans += changed.sum(axis=1) >= len(policy.BEAM_DEGREES) - 1
+        scans += (changed.sum(axis=1) >= len(policy.BEAM_DEGREES) - 1) & ~out.done
         ranges = now
     env.close()
     scan_rate = racecar_neo_v2_params().lidar.scan_rate  # turns/s

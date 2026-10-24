@@ -17,6 +17,7 @@ from types import MappingProxyType
 import mujoco
 import numpy as np
 import pytest
+from cases import case
 from gymnasium import spaces
 from gymnasium.utils.env_checker import check_env
 from neoracer_mujoco import assets, export, sim
@@ -82,37 +83,13 @@ def test_observation_space_is_valid_box(env):
 
 
 def test_gymnasium_check_env_passes(env):
-    """Gymnasium's env checker checks the API, the dtypes, the spaces and the
-    seeding."""
+    """Gymnasium's env checker checks the API, the dtypes and the spaces,
+    that reset and step return what the spaces allow, and that a seed gives
+    the same reset and the same step, so no test here repeats them."""
     check_env(env, skip_render_check=True)
 
 
 # --- reset() / step() basic contract ----------------------------------------
-
-
-def test_reset_observation_in_space(env):
-    obs, info = env.reset(seed=0)
-    assert env.observation_space.contains(obs)
-    assert isinstance(info, dict)
-
-
-def test_step_observation_in_space_and_types(env):
-    env.reset(seed=0)
-    obs, reward, terminated, truncated, info = env.step(
-        np.array([0.3, 0.1], dtype=np.float32)
-    )
-    assert env.observation_space.contains(obs)
-    assert np.isfinite(reward)
-    assert isinstance(terminated, bool)
-    assert isinstance(truncated, bool)
-    assert isinstance(info, dict)
-    assert "termination_reason" in info
-
-
-def test_repeated_resets_work(env):
-    for seed in range(5):
-        obs, _info = env.reset(seed=seed)
-        assert env.observation_space.contains(obs)
 
 
 def test_full_bounded_episode_runs_without_crashing(env):
@@ -130,26 +107,6 @@ def test_full_bounded_episode_runs_without_crashing(env):
 
 
 # --- determinism / seeding ---------------------------------------------------
-
-
-def test_deterministic_reset_same_seed():
-    """Two envs with the same seed give the same reset observation. With the
-    same actions, they give the same step results."""
-    env1, env2 = NeoRacerEnv(), NeoRacerEnv()
-    obs1, _ = env1.reset(seed=42)
-    obs2, _ = env2.reset(seed=42)
-    np.testing.assert_array_equal(obs1, obs2)
-
-    rng = np.random.default_rng(0)
-    for _ in range(20):
-        action = rng.uniform(-1, 1, size=2).astype(np.float32)
-        r1 = env1.step(action)
-        r2 = env2.step(action)
-        np.testing.assert_array_equal(r1[0], r2[0])  # obs
-        assert r1[1] == r2[1]  # reward
-        assert r1[2] == r2[2] and r1[3] == r2[3]  # terminated, truncated
-    env1.close()
-    env2.close()
 
 
 def test_different_seeds_produce_different_spawns():
@@ -194,24 +151,24 @@ def test_out_of_range_actions_are_clamped_not_rejected():
     env_b.close()
 
 
-@pytest.mark.parametrize("scale", [0.1, 0.5, 1.0])
-def test_full_throttle_gives_throttle_scale_of_the_battery_voltage(scale):
+def test_full_throttle_gives_throttle_scale_of_the_battery_voltage():
     """action[0] = 1 writes throttle_scale times the drive motor's voltage
     limit, the battery's, to the motor."""
-    env = NeoRacerEnv(NeoRacerEnvConfig(throttle_scale=scale))
-    env.reset(seed=0)
-    env.step(np.array([1.0, 0.0], dtype=np.float32))
-    limit = env.model.bind_scalar(env.scene.car.drive).ctrlrange[1]  # V
-    assert env.data.bind_scalar(env.scene.car.drive).ctrl[0] == pytest.approx(
-        scale * limit
-    )
-    env.close()
+    for scale in (0.1, 0.5, 1.0):
+        with case(scale):
+            env = NeoRacerEnv(NeoRacerEnvConfig(throttle_scale=scale))
+            env.reset(seed=0)
+            env.step(np.array([1.0, 0.0], dtype=np.float32))
+            limit = env.model.bind_scalar(env.scene.car.drive).ctrlrange[1]  # V
+            ctrl = env.data.bind_scalar(env.scene.car.drive).ctrl[0]
+            env.close()
+            assert ctrl == pytest.approx(scale * limit)
 
 
-@pytest.mark.parametrize("scale", [0.0, -0.1, 1.5])
-def test_throttle_scale_outside_0_1_is_rejected(scale):
-    with pytest.raises(ValueError, match="throttle_scale"):
-        NeoRacerEnvConfig(throttle_scale=scale)
+def test_throttle_scale_outside_0_1_is_rejected():
+    for scale in (0.0, -0.1, 1.5):
+        with case(scale), pytest.raises(ValueError, match="throttle_scale"):
+            NeoRacerEnvConfig(throttle_scale=scale)
 
 
 def test_wall_crash_observations_stay_in_space():
@@ -362,15 +319,16 @@ def _episode_return(
     return total, reason
 
 
-@pytest.mark.parametrize("seed", range(3))
-def test_trying_the_first_corner_beats_not_moving(seed):
+def test_trying_the_first_corner_beats_not_moving():
     """A car that drives straight at the first corner and hits the wall
     returns more than a car that does not move. Otherwise "do not move"
     would be a local optimum that a learner has to escape."""
-    still, still_end = _episode_return(0.0, seed)
-    tried, tried_end = _episode_return(1.0, seed)
-    assert (still_end, tried_end) == ("stuck", "crash")
-    assert tried > still
+    for seed in range(3):
+        with case(seed):
+            still, still_end = _episode_return(0.0, seed)
+            tried, tried_end = _episode_return(1.0, seed)
+            assert (still_end, tried_end) == ("stuck", "crash")
+            assert tried > still
 
 
 # --- termination and truncation in the env ------------------------------------

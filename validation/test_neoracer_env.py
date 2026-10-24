@@ -12,6 +12,7 @@ import os
 import pickle
 import re
 from collections.abc import Mapping
+from dataclasses import replace
 from types import MappingProxyType
 
 import mujoco
@@ -22,6 +23,7 @@ from gymnasium import spaces
 from gymnasium.utils.env_checker import check_env
 from neoracer_mujoco import assets, export, sim
 from neoracer_mujoco.physics import PhysicsRanges, Range
+from neoracer_mujoco.racecar_core_adapter import neoracer_params
 from neoracer_mujoco.track_generation import Track
 from neoracer_mujoco.track_generation.mjcf import to_start_frame
 from neoracer_spec.neoracer import NEORACER
@@ -151,12 +153,14 @@ def test_out_of_range_actions_are_clamped_not_rejected():
     env_b.close()
 
 
-def test_full_throttle_gives_throttle_scale_of_the_battery_voltage():
-    """action[0] = 1 writes throttle_scale times the drive motor's voltage
-    limit, the battery's, to the motor."""
+def test_without_a_speed_loop_full_speed_gives_max_speed_of_the_throttle():
+    """On a car without a speed loop, action[0] = 1 is the throttle max_speed:
+    on the NeoRacer's motor, that share of its voltage limit, the battery's."""
     for scale in (0.1, 0.5, 1.0):
         with case(scale):
-            env = NeoRacerEnv(NeoRacerEnvConfig(throttle_scale=scale))
+            car = replace(neoracer_params(), speed_loop=None)
+            config = NeoRacerEnvConfig(max_speed=scale, car=car)
+            env = NeoRacerEnv(config)
             env.reset(seed=0)
             env.step(np.array([1.0, 0.0], dtype=np.float32))
             limit = env.model.bind_scalar(env.scene.car.drive).ctrlrange[1]  # V
@@ -165,17 +169,37 @@ def test_full_throttle_gives_throttle_scale_of_the_battery_voltage():
             assert ctrl == pytest.approx(scale * limit)
 
 
-def test_throttle_scale_outside_0_1_is_rejected():
+def test_the_car_holds_the_speed_that_the_action_asks_for():
+    """action[0] asks the NeoRacer's speed loop for that share of max_speed
+    times the loop's max speed. Straight ahead from the start of
+    loop_corridor, the car's speed is within 0.1 m/s of it after 1.5 s."""
+    loop = NeoRacerEnvConfig().car.speed_loop
+    assert loop is not None
+    for speed, max_speed in ((1.0, 0.1), (0.5, 0.2), (0.4, 0.5)):
+        with case((speed, max_speed)):
+            env = NeoRacerEnv(NeoRacerEnvConfig(max_speed=max_speed))
+            env.reset(seed=0)
+            for _ in range(round(1.5 * env.config.control_hz)):
+                _obs, _r, terminated, _t, info = env.step(
+                    np.array([speed, 0.0], dtype=np.float32)
+                )
+                assert not terminated
+            env.close()
+            target = speed * max_speed * loop.max_speed
+            assert info["speed_ms"] == pytest.approx(target, abs=0.1)
+
+
+def test_max_speed_outside_0_1_is_rejected():
     for scale in (0.0, -0.1, 1.5):
-        with case(scale), pytest.raises(ValueError, match="throttle_scale"):
-            NeoRacerEnvConfig(throttle_scale=scale)
+        with case(scale), pytest.raises(ValueError, match="max_speed"):
+            NeoRacerEnvConfig(max_speed=scale)
 
 
 def test_wall_crash_observations_stay_in_space():
     """Every observation up to a wall crash is inside observation_space. The
-    actions are full throttle at the full battery voltage (throttle_scale=1)
-    and random steering from default_rng(13)."""
-    env = NeoRacerEnv(NeoRacerEnvConfig(throttle_scale=1.0))
+    actions are full speed, which is full throttle at the full battery
+    voltage, and random steering from default_rng(13)."""
+    env = NeoRacerEnv()
     rng = np.random.default_rng(13)
     env.reset(seed=13)
     reason = None
@@ -307,17 +331,15 @@ def test_reward_adds_the_terminal_term():
             assert reward(cfg, delta, reason) == pytest.approx(base + term)
 
 
-def _episode_return(
-    throttle: float, seed: int
-) -> tuple[float, TerminationReason | None]:
+def _episode_return(speed: float, seed: int) -> tuple[float, TerminationReason | None]:
     """The return and the end of an episode with a constant action: the
-    throttle, and no steering."""
+    speed, and no steering."""
     env = NeoRacerEnv()
     env.reset(seed=seed)
     total, reason = 0.0, None
     for _ in range(env.config.max_episode_steps):
         _obs, r, terminated, truncated, info = env.step(
-            np.array([throttle, 0.0], dtype=np.float32)
+            np.array([speed, 0.0], dtype=np.float32)
         )
         total += r
         if terminated or truncated:
@@ -371,7 +393,7 @@ def test_rollover_terminates(env):
 
 
 def test_stuck_terminates(env):
-    """With zero throttle, the car makes no progress. So the stuck check
+    """With zero speed, the car makes no progress. So the stuck check
     ends the episode after stuck_window_s."""
     env.reset(seed=0)
     cfg = env.config

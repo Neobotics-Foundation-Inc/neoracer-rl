@@ -31,6 +31,7 @@ import numpy as np
 import numpy.typing as npt
 from neoracer_mujoco import assets
 from neoracer_mujoco.physics import PhysicsRanges, Range
+from neoracer_mujoco.racecar_core_adapter import racecar_neo_v2_params
 
 from examples.racecar_neo_v2 import policy
 from examples.train_ppo import (
@@ -48,7 +49,12 @@ from examples.train_ppo import (
 from neoracer_rl.envs import NeoRacerEnvConfig, neoracer_env
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
 
-CAR = os.path.join(assets.ASSET_DIR, "racecar_neo_v2.xml")
+CONFIG = NeoRacerEnvConfig(
+    car_path=os.path.join(assets.ASSET_DIR, "racecar_neo_v2.xml"),
+    car=racecar_neo_v2_params(),
+)
+"""The env on the V2, whose model holds its own speed: action[0] times
+max_speed is its throttle."""
 # The physics ranges of training: wide enough for the policy to drive a car
 # that differs from the model, not measured on the real car.
 PHYSICS = PhysicsRanges(
@@ -216,13 +222,14 @@ def save_policy(
     config: NeoRacerEnvConfig,
 ) -> None:
     """The arrays of train_ppo.save_policy, which load_policy reads, and
-    what policy.load needs beside them: obs_clip and throttle_scale."""
+    what policy.load needs beside them: obs_clip and throttle_scale, the
+    config's max_speed."""
     np.savez(
         path,
         allow_pickle=False,
         **policy_arrays(net, stats),
         obs_clip=np.array(params.obs_clip),
-        throttle_scale=np.array(config.throttle_scale),
+        throttle_scale=np.array(config.max_speed),
     )
 
 
@@ -275,7 +282,7 @@ def main() -> None:
     args = parser.parse_args()
     params, sensing_params = PPOParams(), SensingParams()
     tracks = parse_track_arguments(args)
-    config = NeoRacerEnvConfig(car_path=CAR, tracks=tracks, physics=PHYSICS)
+    config = replace(CONFIG, tracks=tracks, physics=PHYSICS)
 
     if args.eval is not None:
         car = policy.load(args.eval)
@@ -286,7 +293,7 @@ def main() -> None:
             args.seed + 10_000,
             args.nthread,
             # The throttle that action 1 commands, as on the car.
-            replace(config, throttle_scale=car.throttle_scale),
+            replace(config, max_speed=car.throttle_scale),
         )
         laps = [
             r.steps * policy.CONTROL_PERIOD

@@ -15,14 +15,21 @@ the center of the loop on loop_corridor, and the distance along the
 centerline on a generated track, as an angle: 2 pi is one lap on both.
 
 Action space -- Box([-1,-1],[1,1]), float32:
-    action[0] = normalized throttle, + = forward
-    action[1] = normalized steer,    + = LEFT
+    action[0] = normalized speed, + = forward
+    action[1] = normalized steer, + = LEFT
 
-    The signs are the ones in contract.py: + throttle = forward, + steer = left.
+    The signs are the ones in contract.py: + speed = forward, + steer = left.
     racecar_core uses + angle = right, so this env does not use
     racecar_core_adapter.MujocoDrive, which negates the steer. step() clamps
-    the action and scales it by the actuator limits of the compiled model
-    (contract.actuator_limits), and the throttle also by throttle_scale.
+    the action and scales the steer by the steer servo's limit
+    (contract.actuator_limits). The car's computer commands a speed (its
+    spec's Command.drive). On the NeoRacer, action[0] asks the firmware's
+    speed loop (config.car.speed_loop, neoracer_mujoco.speed_loop) for that
+    share of config.max_speed times the loop's max speed, as racecar_core's
+    set_speed_angle asks the car, and the loop sets the throttle at the
+    firmware's ticks. The RACECAR Neo V2's model holds its own speed (its
+    car has no speed loop), so there action[0] times max_speed is the
+    throttle, which its model takes as a speed.
 
 Observation space -- Box(20,), float32, built only from sensors.SensorReadings
 (no raw qpos/qvel):
@@ -41,9 +48,11 @@ Observation space -- Box(20,), float32, built only from sensors.SensorReadings
 
 Control rate: 30 Hz, the target LiDAR scan rate of the real hardware.
 __init__ computes the physics steps per action from model.opt.timestep.
-Each step starts MuJoCo's constraint solver cold (qacc_warmstart = 0), as
-mujoco.rollout does, so a row of NeoRacerBatch on the CPU backend steps the
-same as this env, bit for bit.
+Each step, and each tick of the speed loop, starts MuJoCo's constraint
+solver cold (qacc_warmstart = 0), as mujoco.rollout does at the start of each
+piece of batch.drive, so a row of NeoRacerBatch on the CPU backend steps the
+same as this env, bit for bit. reset() starts the speed loop over, its ticks
+from then on.
 
 Reward (RewardConfig, all weights explicit and UNTUNED, see reward):
     r_t = progress_weight * delta_theta_t
@@ -84,9 +93,19 @@ import mujoco.viewer
 import numpy as np
 import numpy.typing as npt
 from gymnasium import spaces
-from neoracer_mujoco import assets, batch, collision, contract, physics, sensors, sim
+from neoracer_mujoco import (
+    assets,
+    batch,
+    collision,
+    contract,
+    physics,
+    sensors,
+    sim,
+    speed_loop,
+)
 from neoracer_mujoco.control.steering import ControlCommand
 from neoracer_mujoco.physics import PhysicsRanges
+from neoracer_mujoco.racecar_core_adapter import CarParams, neoracer_params
 from neoracer_mujoco.scene import Car, Scene
 from neoracer_mujoco.sim import SpawnRange
 from neoracer_mujoco.track_generation import (
@@ -109,6 +128,9 @@ _TRACK = os.path.join(assets.TRACK_DIR, "loop_corridor.xml")
 # tracks needed, so that every track of a pool has the same sizes, as a batch
 # with one track per row needs.
 WALL_BOXES = 192
+
+NEORACER = neoracer_params()
+"""The NeoRacer's settings beside its model, from its spec."""
 
 OBS_DIM = 20
 type Observation = npt.NDArray[np.float32]  # shape (OBS_DIM,), see module docstring
@@ -160,8 +182,8 @@ class TerminationConfig:
 class ObservationBounds:
     """Bounds of the observation space, with a margin over the peaks in 160
     episodes on loop_corridor.xml at full throttle at the full battery voltage
-    (throttle_scale=1) with random steering, each run to its end (all end in
-    a wall crash), with the elliptic friction cone and impratio=10.
+    with random steering, each run to its end (all end in a wall crash), with
+    the elliptic friction cone and impratio=10.
     If the track, the spawn range or the car changes, measure the peaks again."""
 
     lidar_m: float = 50.0  # m
@@ -205,13 +227,16 @@ class NeoRacerEnvConfig:
     car_path: str = assets.DEFAULT_CAR
     tracks: Tracks = LoopCorridor()
     control_hz: float = 30.0  # Hz
-    # The fraction of the battery voltage that action[0] = 1 gives the drive
-    # motor, in (0, 1]. At the full voltage the car reaches about 3.5 m/s.
-    # The corners of loop_corridor need less (a LiDAR centering controller at
-    # a fixed throttle laps at 0.5 and hits the wall at 0.75), but PPO can learn
-    # to slow for them: in EXPERIMENTS.md, the policies trained with random
-    # physics or on generated tracks lap at 1.0.
-    throttle_scale: float = 1.0
+    max_speed: float = 1.0
+    """The share of the car's full speed that action[0] = 1 asks for, in
+    (0, 1], as racecar_core's set_max_speed sets it. The NeoRacer's full speed
+    is its speed loop's max speed, more than its motor reaches on the battery
+    (about 3.5 m/s), so there action[0] = 1 holds full throttle."""
+    car: CarParams = NEORACER
+    """The settings of the car of car_path beside its model, from its spec:
+    the NeoRacer's. Its speed loop runs beside the model; a car whose model
+    holds its own speed has none, as the RACECAR Neo V2's does
+    (racecar_neo_v2_params)."""
     max_episode_steps: int = 1800  # 60 s at 30 Hz
     obs_bounds: ObservationBounds = ObservationBounds()
     spawn: SpawnRange = SpawnRange()
@@ -221,10 +246,8 @@ class NeoRacerEnvConfig:
     physics: PhysicsRanges = PhysicsRanges()
 
     def __post_init__(self) -> None:
-        if not 0.0 < self.throttle_scale <= 1.0:
-            raise ValueError(
-                f"throttle_scale must be in (0, 1], not {self.throttle_scale}"
-            )
+        if not 0.0 < self.max_speed <= 1.0:
+            raise ValueError(f"max_speed must be in (0, 1], not {self.max_speed}")
 
 
 @dataclass(frozen=True)
@@ -481,6 +504,9 @@ class NeoRacerEnv(gym.Env):
         )
 
         self._limits = contract.actuator_limits(self.model, self._car)
+        self.loop: speed_loop.SpeedLoopState | None = None
+        """The car's speed loop (config.car.speed_loop) in the episode.
+        reset() starts it over."""
 
         self.action_space = spaces.Box(
             low=_ACTION_LOW, high=_ACTION_HIGH, dtype=np.float32
@@ -501,6 +527,39 @@ class NeoRacerEnv(gym.Env):
 
     def _lap_angle(self) -> float:
         return float(lap_angle(self._arena, self.data.sensordata))
+
+    def _drive_angle(self) -> float:
+        """The drivetrain's angle (rad) now, at the last step's end."""
+        return float(batch.drive_angle(self.model, self._car, self.data.qpos))
+
+    def _drive(self, speed: float, steer: float) -> bool:
+        """Step one control period with speed (action[0]) and steer (rad)
+        commanded, the car's speed loop, if it has one, holding the speed.
+        Return whether a car geom touched a wall."""
+        params, dt = self.config.car.speed_loop, float(self.model.opt.timestep)
+        if params is None or self.loop is None:
+            commanded, throttle = 0.0, speed * self.config.max_speed
+        else:
+            commanded = float(speed_loop.target(params, speed, self.config.max_speed))
+            throttle = float(self.loop.throttle)
+        contact, fresh = False, True
+        for _ in range(self._substeps_per_action):
+            if fresh:
+                self.data.qacc_warmstart[:] = 0
+                command = ControlCommand(throttle=throttle, steer=steer)
+                sim.apply_command(self._car, self.data, command)
+            mujoco.mj_step(self.model, self.data)
+            if collision.car_touches_wall(self.data, self._car):
+                contact = True
+            fresh = False
+            if params is not None and self.loop is not None:
+                angle = self._drive_angle()
+                self.loop = speed_loop.step(params, self.loop, commanded, angle, dt)
+                fresh, throttle = (
+                    self.loop.measure.span == 0.0,
+                    float(self.loop.throttle),
+                )
+        return contact
 
     def _build_observation(self) -> tuple[Observation, float]:
         """The observation, and the estimated speed (m/s) in it."""
@@ -541,6 +600,9 @@ class NeoRacerEnv(gym.Env):
         )
         self.physics = physics.sample(self.config.physics, self.np_random)
         physics.apply_physics(self.model, self.scene, self.physics)
+        params = self.config.car.speed_loop
+        if params is not None:
+            self.loop = speed_loop.start(params, self._drive_angle())
 
         self._step_count = 0
         self._progress = start_progress(self._lap_angle())
@@ -556,21 +618,8 @@ class NeoRacerEnv(gym.Env):
         action = np.clip(
             np.asarray(action, dtype=np.float32), _ACTION_LOW, _ACTION_HIGH
         )
-        sim.apply_command(
-            self._car,
-            self.data,
-            ControlCommand(
-                throttle=float(action[0]) * self.config.throttle_scale,
-                steer=float(action[1]) * self._limits.steer_rad,
-            ),
-        )
-
-        self.data.qacc_warmstart[:] = 0
-        contact_this_tick = False
-        for _ in range(self._substeps_per_action):
-            mujoco.mj_step(self.model, self.data)
-            if collision.car_touches_wall(self.data, self._car):
-                contact_this_tick = True
+        steer = float(action[1]) * self._limits.steer_rad
+        contact_this_tick = self._drive(float(action[0]), steer)
 
         self._step_count += 1
         window_len = self._window_len

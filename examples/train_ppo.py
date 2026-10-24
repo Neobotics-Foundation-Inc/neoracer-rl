@@ -7,7 +7,7 @@ It collects a batch of steps with the current policy, then makes a few
 gradient steps on a loss that limits how far the new policy moves from the old one.
 This script is a small baseline, not a tuned agent.
 
-The policy is a Gaussian distribution over (throttle, steer). An MLP gives the mean,
+The policy is a Gaussian distribution over (speed, steer). An MLP gives the mean,
 and a learned vector gives the log standard deviation. env.step() clips each
 sampled action to [-1, 1]; the log probability uses the unclipped sample.
 A second MLP (the critic) estimates the value of an observation.
@@ -70,7 +70,7 @@ from neoracer_rl.envs.neoracer_env import (
     Tracks,
 )
 
-ACTION_DIM = 2  # (throttle, steer), see neoracer_env.py
+ACTION_DIM = 2  # (speed, steer), see neoracer_env.py
 
 # The physics ranges of --random-physics: an example to start from, wide
 # enough to see an effect, not measured on the real car.

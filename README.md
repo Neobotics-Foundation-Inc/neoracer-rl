@@ -22,8 +22,10 @@ The action is two numbers in [-1, 1]:
 
 | Action | +1 means |
 |---|---|
-| 0: throttle | the battery's full 11.1 V, forward |
+| 0: speed | the firmware's max speed, 6 m/s, forward |
 | 1: steering | full lock to the left, 0.4405 rad |
+
+The speed goes to the car's firmware, as `rc.drive.set_speed_angle` sends it on the car. The firmware's speed loop sets the throttle every 20 ms to hold that speed. The motor reaches about 3.5 m/s on the battery, so a speed past 0.6 asks for more than the car can go and holds full throttle.
 
 The observation is twenty numbers:
 
@@ -67,7 +69,7 @@ The reason is a `Literal["rollover", "crash", "stuck", "lap_complete"]`, so the 
 
 ## Changing the task
 
-`NeoRacerEnvConfig` holds the whole task: the track, the rewards, the spawn, the end conditions, how much of the battery full throttle gives, and how much to randomize the physics. To change the task, make a new config:
+`NeoRacerEnvConfig` holds the whole task: the track, the rewards, the spawn, the end conditions, the share of the max speed that a speed of 1 asks for, and how much to randomize the physics. To change the task, make a new config:
 
 ```python
 from neoracer_mujoco.physics import PhysicsRanges, Range
@@ -116,11 +118,11 @@ env.close()
 
 When a row's episode ends, the row starts over in the same step. `out.obs` is the last observation of the old episode, and `state.obs` is the first of the new one. A row keeps the same spawn and physics until `env.respawn(state, rng)` draws new ones. The PPO script calls `respawn` once per rollout.
 
-The batch uses the env's `observation`, `lap_angle` and rewards, and array versions of its progress and termination checks. On the `Cpu` backend, a row steps exactly like `NeoRacerEnv` from the same spawn, bit for bit. `Warp()` runs the rows on a CUDA GPU with MuJoCo Warp, all on one track.
+The batch uses the env's `observation`, `lap_angle` and rewards, and array versions of its progress and termination checks. On the `Cpu` backend, a row's first episode steps exactly like `NeoRacerEnv` from the same spawn, bit for bit. The rows' speed loops tick together, so a row that starts over keeps the batch's ticks, while `NeoRacerEnv.reset` starts its own over. `Warp()` runs the rows on a CUDA GPU with MuJoCo Warp, all on one track.
 
 ## Training a policy
 
-`examples/train_ppo.py` is a small PPO baseline in JAX and optax. The policy is a Gaussian over throttle and steering, with an MLP for the mean.
+`examples/train_ppo.py` is a small PPO baseline in JAX and optax. The policy is a Gaussian over speed and steering, with an MLP for the mean.
 
 ```sh
 python -m examples.train_ppo --total-steps 400000 --seed 1 --out ppo.npz

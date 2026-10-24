@@ -34,7 +34,6 @@ import copy
 from dataclasses import dataclass, replace
 from typing import Any, assert_never
 
-import mujoco
 import numpy as np
 import numpy.typing as npt
 from neoracer_mujoco import batch, contract, physics, sim
@@ -43,7 +42,6 @@ from neoracer_mujoco.track_generation import shortest_loop_distance
 from .neoracer_env import (
     NeoRacerEnvConfig,
     TerminationReason,
-    apply_spawn_offset,
     arenas,
     lap_angle,
     observation,
@@ -224,9 +222,7 @@ class NeoRacerBatch:
         # The car at rest on the ground of each track, before the offset.
         self._settled = []
         for arena in self._arenas:
-            data = mujoco.MjData(arena.scene.model)
-            sim.apply_ctrl_and_step(arena.scene.model, data, 0.0, sim.SETTLE_STEPS)
-            self._settled.append(data)
+            self._settled.append(sim.settle(arena.scene.model))
 
     def _lap_angles(self, track: Ints, sensordata: npt.NDArray) -> Rows:
         """lap_angle of each row on its own track, shape (nbatch,)."""
@@ -249,7 +245,7 @@ class NeoRacerBatch:
                 tracks[i] = rng.integers(len(self._arenas))
             scene = self._arenas[tracks[i]].scene
             data = copy.copy(self._settled[tracks[i]])
-            apply_spawn_offset(scene.model, data, scene.car, self.config.spawn, rng)
+            sim.perturb_spawn(scene.model, data, scene.car, rng, self.config.spawn)
             datas.append(data)
             scenes.append(scene)
             rows.append(physics.sample(self.config.physics, rng))

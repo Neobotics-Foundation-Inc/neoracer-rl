@@ -60,6 +60,7 @@ from neoracer_rl.envs.neoracer_batch import (
     BatchState,
     Cpu,
     NeoRacerBatch,
+    StepResult,
     Warp,
 )
 from neoracer_rl.envs.neoracer_env import (
@@ -382,6 +383,22 @@ class EpisodeResult:
     steps: int  # env steps (30 Hz)
 
 
+def ended(
+    out: StepResult, returns: npt.NDArray[np.float64], steps: npt.NDArray[np.int64]
+) -> dict[int, EpisodeResult]:
+    """The result of each row whose episode ended in the step that gave out,
+    by row: its return and its steps so far, and how it ended."""
+    return {
+        int(i): EpisodeResult(
+            float(returns[i]),
+            float(out.lap_frac[i]),
+            REASONS[out.reason[i] - 1] if out.reason[i] else "truncated",
+            int(steps[i]),
+        )
+        for i in np.flatnonzero(out.done)
+    }
+
+
 type EnvObsBatch = npt.NDArray[np.float32]  # shape (N, OBS_DIM), the env's
 type ActionBatch = npt.NDArray[np.float64]  # shape (N, ACTION_DIM)
 type Rows = npt.NDArray[np.bool_]  # shape (N,)
@@ -510,16 +527,7 @@ def collect_rollout[S](
             final = normalize_obs(stats, final_obs, params.obs_clip)
             final_value = np.asarray(value(net, jnp.asarray(final)))
             rew_buf[t] += np.where(out.truncated, params.gamma * final_value, 0.0)
-        for i in np.flatnonzero(out.done):
-            code = int(out.reason[i])
-            finished.append(
-                EpisodeResult(
-                    float(ep_ret[i]),
-                    float(out.lap_frac[i]),
-                    REASONS[code - 1] if code else "truncated",
-                    int(ep_steps[i]),
-                )
-            )
+        finished.extend(ended(out, ep_ret, ep_steps).values())
         ep_ret[out.done], ep_steps[out.done] = 0.0, 0
         if out.done.any():
             carry = interface.restart(carry, out.done, env_state.obs, rng)
@@ -624,6 +632,11 @@ def train[S](
 
 
 def save_policy(path: str, net: ActorCritic, stats: ObsStats) -> None:
+    np.savez(path, allow_pickle=False, **policy_arrays(net, stats))
+
+
+def policy_arrays(net: ActorCritic, stats: ObsStats) -> dict[str, np.ndarray]:
+    """The arrays of net and stats, by the names that load_policy reads."""
     arrays: dict[str, np.ndarray] = {
         "log_std": np.asarray(net.log_std),
         "obs_mean": stats.mean,
@@ -634,7 +647,7 @@ def save_policy(path: str, net: ActorCritic, stats: ObsStats) -> None:
         for i, layer in enumerate(layers):
             arrays[f"{name}.{i}.weight"] = np.asarray(layer.weight)
             arrays[f"{name}.{i}.bias"] = np.asarray(layer.bias)
-    np.savez(path, allow_pickle=False, **arrays)
+    return arrays
 
 
 def load_policy(path: str) -> tuple[ActorCritic, ObsStats]:

@@ -7,6 +7,7 @@ NeoRacerEnv, bit for bit.
 
 import numpy as np
 import pytest
+from cases import case
 from neoracer_mujoco.physics import Physics, PhysicsRanges, Range
 
 from neoracer_rl.envs import (
@@ -97,21 +98,25 @@ RANDOM_PHYSICS = PhysicsRanges(
 )
 
 
-@pytest.mark.parametrize(
-    "config",
-    [
-        NeoRacerEnvConfig(),
-        NeoRacerEnvConfig(physics=RANDOM_PHYSICS),
-        NeoRacerEnvConfig(tracks=GeneratedTracks(count=3), physics=RANDOM_PHYSICS),
-    ],
-    ids=["nominal", "random-physics", "generated-tracks"],
-)
-def test_a_cpu_row_steps_like_neoracer_env(config):
+def test_a_cpu_row_steps_like_neoracer_env():
     """Rows 0 and 1 of a batch reset with default_rng(7) start where
     NeoRacerEnv starts after reset(seed=7) and after a second reset, on the
     same track and with the same physics. With the same actions, they give
     the same observations, rewards and episode ends, bit for bit, until the
     first episode ends."""
+    configs = {
+        "nominal": NeoRacerEnvConfig(),
+        "random-physics": NeoRacerEnvConfig(physics=RANDOM_PHYSICS),
+        "generated-tracks": NeoRacerEnvConfig(
+            tracks=GeneratedTracks(count=3), physics=RANDOM_PHYSICS
+        ),
+    }
+    for name, config in configs.items():
+        with case(name):
+            _steps_like_neoracer_env(config)
+
+
+def _steps_like_neoracer_env(config: NeoRacerEnvConfig) -> None:
     sim_batch = NeoRacerBatch(Cpu(nthread=2), nbatch=2, config=config)
     state = sim_batch.reset(np.random.default_rng(7))
     envs = [NeoRacerEnv(config), NeoRacerEnv(config)]

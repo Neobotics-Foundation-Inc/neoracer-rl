@@ -5,12 +5,13 @@ the observation statistics, and a short training run on NeoRacerBatch.
 
 import argparse
 from dataclasses import replace
-from typing import Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from cases import case
 
 from examples.train_ppo import (
     ACTION_DIM,
@@ -54,38 +55,45 @@ def _reward_to_go(rewards: np.ndarray, dones: np.ndarray) -> np.ndarray:
     return out
 
 
-@pytest.mark.parametrize("seed", range(5))
-def test_gae_with_unit_gamma_lambda_and_zero_values_is_reward_to_go(seed):
-    rng = np.random.default_rng(seed)
-    rewards = rng.normal(size=(12, 3))
-    dones = (rng.uniform(size=(12, 3)) < 0.2).astype(np.float64)
-    zeros = jnp.zeros((12, 3))
-    adv, ret = gae(
-        jnp.asarray(rewards), zeros, jnp.asarray(dones), jnp.zeros(3), 1.0, 1.0
-    )
-    expected = _reward_to_go(rewards, dones)
-    np.testing.assert_allclose(adv, expected, rtol=1e-5, atol=1e-5)
-    np.testing.assert_allclose(ret, expected, rtol=1e-5, atol=1e-5)
+def test_gae_with_unit_gamma_lambda_and_zero_values_is_reward_to_go():
+    for seed in range(5):
+        with case(seed):
+            rng = np.random.default_rng(seed)
+            rewards = rng.normal(size=(12, 3))
+            dones = (rng.uniform(size=(12, 3)) < 0.2).astype(np.float64)
+            zeros = jnp.zeros((12, 3))
+            adv, ret = gae(
+                jnp.asarray(rewards), zeros, jnp.asarray(dones), jnp.zeros(3), 1.0, 1.0
+            )
+            expected = _reward_to_go(rewards, dones)
+            np.testing.assert_allclose(adv, expected, rtol=1e-5, atol=1e-5)
+            np.testing.assert_allclose(ret, expected, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.parametrize("seed", range(5))
-def test_gae_does_not_leak_across_a_done_step(seed):
-    rng = np.random.default_rng(seed)
-    rewards = jnp.asarray(rng.normal(size=(10, 2)))
-    values = jnp.asarray(rng.normal(size=(10, 2)))
-    last_value = jnp.asarray(rng.normal(size=2))
-    dones = np.zeros((10, 2))
-    dones[4] = 1.0  # an episode ends after step 4
-    adv, _ = gae(rewards, values, jnp.asarray(dones), last_value, 0.97, 0.9)
-    # Changes after the done step do not change the advantages up to it.
-    changed_rewards = rewards.at[5:].add(100.0)
-    changed_values = values.at[5:].add(-50.0)
-    adv2, _ = gae(
-        changed_rewards, changed_values, jnp.asarray(dones), last_value + 7.0, 0.97, 0.9
-    )
-    np.testing.assert_allclose(adv[:5], adv2[:5], rtol=1e-6, atol=1e-6)
-    # At the done step, the advantage is the reward minus the value.
-    np.testing.assert_allclose(adv[4], rewards[4] - values[4], rtol=1e-6, atol=1e-6)
+def test_gae_does_not_leak_across_a_done_step():
+    for seed in range(5):
+        with case(seed):
+            rng = np.random.default_rng(seed)
+            rewards = jnp.asarray(rng.normal(size=(10, 2)))
+            values = jnp.asarray(rng.normal(size=(10, 2)))
+            last_value = jnp.asarray(rng.normal(size=2))
+            dones = np.zeros((10, 2))
+            dones[4] = 1.0  # an episode ends after step 4
+            adv, _ = gae(rewards, values, jnp.asarray(dones), last_value, 0.97, 0.9)
+            # Changes after the done step do not change the advantages up to it.
+            adv2, _ = gae(
+                rewards.at[5:].add(100.0),
+                values.at[5:].add(-50.0),
+                jnp.asarray(dones),
+                last_value + 7.0,
+                0.97,
+                0.9,
+            )
+            np.testing.assert_allclose(adv[:5], adv2[:5], rtol=1e-6, atol=1e-6)
+            # At the done step, the advantage is the reward minus the value.
+            np.testing.assert_allclose(
+                adv[4], rewards[4] - values[4], rtol=1e-6, atol=1e-6
+            )
 
 
 def test_clipped_surrogate_is_zero_for_zero_advantage():
@@ -93,24 +101,25 @@ def test_clipped_surrogate_is_zero_for_zero_advantage():
     np.testing.assert_array_equal(clipped_surrogate(ratio, jnp.zeros(50), 0.2), 0.0)
 
 
-@pytest.mark.parametrize("advantage", [-2.0, -0.5, 0.5, 2.0])
-def test_clipped_surrogate_has_no_gradient_past_the_clip_in_the_improving_direction(
-    advantage,
-):
+def test_clipped_surrogate_has_no_gradient_past_the_clip_in_the_improving_direction():
     eps = 0.2
-    # A ratio that already moved past the clip in the direction that the
-    # advantage rewards gets no more gradient.
-    past = 1.5 if advantage > 0 else 0.5
-    grad = jax.grad(lambda r: clipped_surrogate(r, jnp.asarray(advantage), eps))(past)
-    assert float(grad) == 0.0
-    np.testing.assert_allclose(
-        clipped_surrogate(jnp.asarray(past), jnp.asarray(advantage), eps),
-        -(1.0 + np.sign(advantage) * eps) * advantage,
-        rtol=1e-6,
-    )
-    # Inside the clip range, the loss is -ratio * advantage.
-    inside = jax.grad(lambda r: clipped_surrogate(r, jnp.asarray(advantage), eps))(1.05)
-    np.testing.assert_allclose(inside, -advantage, rtol=1e-6)
+    for advantage in (-2.0, -0.5, 0.5, 2.0):
+        with case(advantage):
+
+            def loss(r, a=advantage):
+                return clipped_surrogate(r, jnp.asarray(a), eps)
+
+            # A ratio that already moved past the clip in the direction that
+            # the advantage rewards gets no more gradient.
+            past = 1.5 if advantage > 0 else 0.5
+            assert float(jax.grad(loss)(past)) == 0.0
+            np.testing.assert_allclose(
+                loss(jnp.asarray(past)),
+                -(1.0 + np.sign(advantage) * eps) * advantage,
+                rtol=1e-6,
+            )
+            # Inside the clip range, the loss is -ratio * advantage.
+            np.testing.assert_allclose(jax.grad(loss)(1.05), -advantage, rtol=1e-6)
 
 
 def test_policy_loss_is_zero_when_all_advantages_are_zero():
@@ -128,9 +137,9 @@ def test_policy_loss_is_zero_when_all_advantages_are_zero():
     assert float(info.policy_loss) == 0.0
 
 
-@pytest.mark.parametrize(
-    "field, bad",
-    [
+def test_ppo_params_reject_values_outside_their_domain():
+    # Each value has its field's type, which no checker can see here.
+    outside: list[tuple[str, Any]] = [
         ("gamma", 0.0),
         ("gae_lambda", 1.5),
         ("rollout_steps", 0),
@@ -141,31 +150,35 @@ def test_policy_loss_is_zero_when_all_advantages_are_zero():
         ("obs_clip", -1.0),
         ("value_coef", -0.5),
         ("entropy_coef", -0.01),
-    ],
-)
-def test_ppo_params_reject_values_outside_their_domain(field, bad):
-    with pytest.raises(ValueError, match=field):
-        PPOParams(**{field: bad})
-
-
-@pytest.mark.parametrize("seed", range(3))
-def test_running_obs_stats_match_numpy_over_all_batches(seed):
-    rng = np.random.default_rng(seed)
-    batches = [
-        rng.normal(
-            loc=rng.uniform(-50, 50, OBS_DIM),
-            scale=rng.uniform(0.01, 100, OBS_DIM),
-            size=(int(rng.integers(1, 40)), OBS_DIM),
-        )
-        for _ in range(6)
     ]
-    stats = empty_obs_stats()
-    for b in batches:
-        stats = update_obs_stats(stats, b)
-    data = np.concatenate(batches)
-    assert stats.count == data.shape[0]
-    np.testing.assert_allclose(stats.mean, data.mean(axis=0), rtol=1e-9, atol=1e-9)
-    np.testing.assert_allclose(stats.var, data.var(axis=0), rtol=1e-9, atol=1e-9)
+    for field, bad in outside:
+        with case(field), pytest.raises(ValueError, match=field):
+            PPOParams(**{field: bad})
+
+
+def test_running_obs_stats_match_numpy_over_all_batches():
+    for seed in range(3):
+        with case(seed):
+            rng = np.random.default_rng(seed)
+            batches = [
+                rng.normal(
+                    loc=rng.uniform(-50, 50, OBS_DIM),
+                    scale=rng.uniform(0.01, 100, OBS_DIM),
+                    size=(int(rng.integers(1, 40)), OBS_DIM),
+                )
+                for _ in range(6)
+            ]
+            stats = empty_obs_stats()
+            for b in batches:
+                stats = update_obs_stats(stats, b)
+            data = np.concatenate(batches)
+            assert stats.count == data.shape[0]
+            np.testing.assert_allclose(
+                stats.mean, data.mean(axis=0), rtol=1e-9, atol=1e-9
+            )
+            np.testing.assert_allclose(
+                stats.var, data.var(axis=0), rtol=1e-9, atol=1e-9
+            )
 
 
 def test_short_training_run_changes_the_params_and_keeps_them_finite(tmp_path):

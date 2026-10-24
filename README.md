@@ -80,7 +80,7 @@ config = NeoRacerEnvConfig(
 env = NeoRacerEnv(config)
 ```
 
-`GeneratedTracks` is a pool of tracks from neoracer-mujoco's generator, and each reset picks one from the pool. `physics` gives a range for each factor on the car's physics, and each reset draws a value from each range. A policy then can't rely on one tyre or one mass.
+`GeneratedTracks` is a pool of tracks from neoracer-mujoco's generator, and each reset picks one from the pool. `physics` gives a range for each factor on the car's physics, and each reset draws a value from each range. A policy then can't rely on one tire or one mass.
 
 Progress has to mean the same on both kinds of track. So the env keeps each compiled track together with the layout that progress is measured on:
 

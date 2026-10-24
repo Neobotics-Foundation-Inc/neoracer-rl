@@ -5,6 +5,8 @@ neoracer_env.py on random inputs, and a row on the Cpu backend steps like
 NeoRacerEnv, bit for bit.
 """
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 from cases import case
@@ -151,11 +153,10 @@ def _steps_like_neoracer_env(config: NeoRacerEnvConfig) -> None:
 
 
 def test_a_row_whose_episode_ends_starts_over_from_its_spawn():
-    """Row 0 drives into the wall at full throttle and row 1 stands still.
+    """Row 0 drives into the wall at full speed and row 1 stands still.
     When row 0 crashes, it is back at its spawn in the same step, and row 1
     goes on."""
-    config = NeoRacerEnvConfig(throttle_scale=1.0)
-    sim_batch = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
+    sim_batch = NeoRacerBatch(Cpu(nthread=0), nbatch=2)
     start = sim_batch.reset(np.random.default_rng(0))
     action = np.array([[1.0, 0.0], [0.0, 0.0]], dtype=np.float32)
     state, out = sim_batch.step(start, action)
@@ -172,8 +173,7 @@ def test_a_row_whose_episode_ends_starts_over_from_its_spawn():
 def test_respawn_changes_only_where_rows_start_over():
     """respawn draws new spawns and leaves the running episodes alone. A row
     whose episode ends after it starts over from its new spawn."""
-    config = NeoRacerEnvConfig(throttle_scale=1.0)
-    sim_batch = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
+    sim_batch = NeoRacerBatch(Cpu(nthread=0), nbatch=2)
     rng = np.random.default_rng(0)
     action = np.array([[1.0, 0.0], [0.0, 0.0]], dtype=np.float32)
     before, _ = sim_batch.step(sim_batch.reset(rng), action)
@@ -225,10 +225,10 @@ def test_a_row_that_starts_over_switches_track_physics_and_progress_together():
     """On a pool with random physics, row 0 ends its episode after a respawn
     drew it another track. It then starts over on the new track, with the
     model, track index, first observation and lap angle of its spawn, and
-    steps like NeoRacerEnv from that spawn, bit for bit. Row 1 goes on."""
-    config = NeoRacerEnvConfig(
-        tracks=GeneratedTracks(count=3), physics=RANDOM_PHYSICS, throttle_scale=1.0
-    )
+    steps like NeoRacerEnv from that spawn, bit for bit, once NeoRacerEnv's
+    speed loop ticks where the batch's loops do: a row that starts over keeps
+    the batch's ticks. Row 1 goes on."""
+    config = NeoRacerEnvConfig(tracks=GeneratedTracks(count=3), physics=RANDOM_PHYSICS)
     sim_batch = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
     state = sim_batch.reset(np.random.default_rng(0))
     # A respawn from default_rng(seed) draws row 0 the spawn of reset(seed).
@@ -253,6 +253,11 @@ def test_a_row_that_starts_over_switches_track_physics_and_progress_together():
     env = NeoRacerEnv(config)
     obs, _ = env.reset(seed=seed)
     np.testing.assert_array_equal(state.obs[0], obs)
+    assert env.loop is not None and state.loop is not None
+    ticks = replace(
+        env.loop.measure, span=state.loop.measure.span, due=state.loop.measure.due
+    )
+    env.loop = replace(env.loop, measure=ticks)
     rng = np.random.default_rng(2)
     for _ in range(30):
         row = rng.uniform((0.0, -1.0), (0.5, 1.0)).astype(np.float32)

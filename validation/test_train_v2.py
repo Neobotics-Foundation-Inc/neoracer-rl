@@ -27,7 +27,7 @@ from examples.train_ppo import (
     ppo_update,
 )
 from examples.train_v2 import (
-    CAR,
+    CONFIG,
     PHYSICS,
     RacecarCore,
     SensingParams,
@@ -38,7 +38,6 @@ from examples.train_v2 import (
     start,
     true_ranges,
 )
-from neoracer_rl.envs import NeoRacerEnvConfig
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
 
 BEAMS = len(policy.BEAM_DEGREES)
@@ -51,8 +50,7 @@ def test_the_v2s_beams_show_a_new_scan_once_a_turn_of_the_head():
     and a beam reads the last complete turn. A row whose episode ends starts
     over, which changes its beams too, so the count leaves out those steps."""
     seconds = 3.0
-    config = NeoRacerEnvConfig(car_path=CAR)
-    env = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
+    env = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=CONFIG)
     state = env.reset(np.random.default_rng(7))
     ranges = true_ranges(state.obs)
     scans = np.zeros(2, dtype=np.int64)
@@ -137,7 +135,7 @@ def test_sensing_params_reject_values_outside_their_domain():
 
 def test_the_car_acts_as_the_trained_networks_mean_action(tmp_path):
     params = PPOParams()
-    config = NeoRacerEnvConfig(car_path=CAR, throttle_scale=0.7)
+    config = replace(CONFIG, max_speed=0.7)
     net = init_actor_critic(jax.random.key(0), params, policy.OBS_DIM)
     # A network whose output layer is not the near-zero one of the start.
     net = replace(net, actor=jax.tree.map(lambda x: 100.0 * x, net.actor))
@@ -164,7 +162,7 @@ def test_the_car_acts_as_the_trained_networks_mean_action(tmp_path):
 def test_a_short_training_run_on_the_v2_changes_the_params_and_keeps_them_finite():
     params = PPOParams(rollout_steps=64, epochs=2, minibatches=2, hidden=(16,))
     interface = RacecarCore(SensingParams())
-    config = NeoRacerEnvConfig(car_path=CAR, physics=PHYSICS)
+    config = replace(CONFIG, physics=PHYSICS)
     env = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
     rng = np.random.default_rng(5)
     env_state = env.reset(rng)

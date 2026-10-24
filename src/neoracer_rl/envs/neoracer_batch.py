@@ -28,6 +28,11 @@ Limit: a row starts over from the spawn and the physics that the last reset
 or respawn drew for it, so its episodes share them until the next respawn. NeoRacerEnv
 draws a new spawn for each episode. Call respawn every few hundred steps,
 for example once per PPO rollout, to see as many spawns.
+
+Limit: the rows' speed loops tick together, as batch.drive runs them, and a
+row that starts over keeps the batch's ticks, while NeoRacerEnv's reset
+starts its ticks over. So a row steps like NeoRacerEnv, bit for bit, in its
+first episode, and its later episodes see the ticks at another phase.
 """
 
 import copy
@@ -36,7 +41,7 @@ from typing import Any, assert_never
 
 import numpy as np
 import numpy.typing as npt
-from neoracer_mujoco import batch, contract, physics, sim
+from neoracer_mujoco import batch, contract, physics, sim, speed_loop
 from neoracer_mujoco.track_generation import shortest_loop_distance
 
 from .neoracer_env import (
@@ -142,6 +147,8 @@ class BatchState:
     obs: Observations  # the observation of the current state
     track: Ints  # the index of each row's track, in the env's pool
     progress: ProgressRows
+    loop: speed_loop.SpeedLoopState | None  # every row's speed loop, if the car has one
+    spawn_drive: Rows  # rad; the drivetrain's angle at spawn
 
 
 @dataclass(frozen=True)
@@ -233,10 +240,13 @@ class NeoRacerBatch:
                 angle[rows] = lap_angle(arena, sensordata[rows])
         return angle
 
-    def _spawns(self, rng: np.random.Generator) -> tuple[Any, Observations, Rows, Ints]:
+    def _spawns(
+        self, rng: np.random.Generator
+    ) -> tuple[Any, Observations, Rows, Ints, Rows]:
         """A new spawn, track and physics for each row, drawn from rng in the
         order of NeoRacerEnv.reset: the backend state, the first observation,
-        the lap_angle and the track index of each row."""
+        the lap_angle, the track index and the drivetrain's angle of each
+        row."""
         model, car = self.scene.model, self.scene.car
         tracks = np.zeros(self.nbatch, np.int64)
         datas, scenes, rows = [], [], []
@@ -256,24 +266,27 @@ class NeoRacerBatch:
             observation(model, car, sensordata),
             self._lap_angles(tracks, sensordata),
             tracks,
+            batch.drive_angle(model, car, np.stack([d.qpos for d in datas])),
         )
 
     def respawn(self, state: BatchState, rng: np.random.Generator) -> BatchState:
         """state with a new spawn, track and physics drawn from rng for each
         row. A row starts over from them when its episode ends."""
-        spawn, spawn_obs, spawn_angle, spawn_track = self._spawns(rng)
+        spawn, spawn_obs, spawn_angle, spawn_track, spawn_drive = self._spawns(rng)
         return replace(
             state,
             spawn=spawn,
             spawn_obs=spawn_obs,
             spawn_angle=spawn_angle,
             spawn_track=spawn_track,
+            spawn_drive=spawn_drive,
         )
 
     def reset(self, rng: np.random.Generator) -> BatchState:
         """Every row at the start of an episode, from a spawn, a track and a
         physics drawn from rng."""
-        spawn, spawn_obs, spawn_angle, spawn_track = self._spawns(rng)
+        spawn, spawn_obs, spawn_angle, spawn_track, spawn_drive = self._spawns(rng)
+        params = self.config.car.speed_loop
         return BatchState(
             sim=spawn,
             spawn=spawn,
@@ -283,23 +296,37 @@ class NeoRacerBatch:
             obs=spawn_obs,
             track=spawn_track,
             progress=start_rows(spawn_angle, self._window_len),
+            loop=None if params is None else speed_loop.start(params, spawn_drive),
+            spawn_drive=spawn_drive,
         )
 
     def step(
         self, state: BatchState, action: npt.ArrayLike
     ) -> tuple[BatchState, StepResult]:
-        """Apply action (nbatch, 2), throttle and steer in [-1, 1] as in
+        """Apply action (nbatch, 2), speed and steer in [-1, 1] as in
         NeoRacerEnv, for one env step. Rows whose episode ends start over
         from their spawn."""
         model, car, cfg = self.scene.model, self.scene.car, self.config
         action = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
-        ctrl = batch.command(
-            model,
-            car,
-            action[:, 0].astype(np.float64) * cfg.throttle_scale,
-            action[:, 1].astype(np.float64) * self._max_steer,
-        )
-        physics, sensordata = self._sim.step(state.sim, ctrl, self._nstep)
+        speed = action[:, 0].astype(np.float64)
+        steer = action[:, 1].astype(np.float64) * self._max_steer
+        params, loop = cfg.car.speed_loop, state.loop
+        if params is None or loop is None:
+            ctrl = batch.command(model, car, speed * cfg.max_speed, steer)
+            physics, sensordata = self._sim.step(state.sim, ctrl, self._nstep)
+        else:
+            commanded = np.asarray(speed_loop.target(params, speed, cfg.max_speed))
+            physics, sensordata, loop = batch.drive(
+                self._sim,
+                model,
+                car,
+                params,
+                state.sim,
+                loop,
+                commanded,
+                steer,
+                self._nstep,
+            )
         # On Warp, reduce on the GPU and copy only the last step to the host.
         last = np.asarray(sensordata[:, -1])
         found = batch.read(model, sensordata, car.truth.wall_contact)[..., 0]
@@ -320,9 +347,12 @@ class NeoRacerBatch:
         done = out.done
         if done.any():
             physics = self._sim.reset(physics, done, state.spawn)
+            if loop is not None:
+                loop = speed_loop.restart(loop, done, state.spawn_drive)
         return replace(
             state,
             sim=physics,
+            loop=loop,
             obs=np.where(done[:, None], state.spawn_obs, out.obs),
             track=np.where(done, state.spawn_track, state.track),
             progress=restart_rows(progress, done, state.spawn_angle),

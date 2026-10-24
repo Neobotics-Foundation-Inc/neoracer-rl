@@ -32,8 +32,8 @@ from neoracer_mujoco.racecar_core_adapter import MujocoRacecar, racecar_neo_v2_p
 from neoracer_mujoco.track_generation import shortest_loop_distance
 
 from examples.racecar_neo_v2 import policy
-from examples.train_v2 import CAR
-from neoracer_rl.envs import NeoRacerEnvConfig, neoracer_env
+from examples.train_v2 import CONFIG
+from neoracer_rl.envs import neoracer_env
 
 PROGRAM = Path(str(importlib.resources.files("examples.racecar_neo_v2") / "driver.py"))
 
@@ -76,7 +76,7 @@ def drive(
 ) -> Drive:
     """Run driver.py for seconds of simulated time, with its DIRECTION,
     SPEED_LIMIT and LOG set to direction, speed_limit and log."""
-    config = NeoRacerEnvConfig(car_path=CAR)
+    config = CONFIG
     scene = neoracer_env.loop_scene(config, visuals=False)
     model, car = scene.model, scene.car
     data = sim.settle(model)

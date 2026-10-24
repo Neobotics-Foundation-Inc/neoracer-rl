@@ -107,7 +107,7 @@ class Layer:
 class Policy:
     """A trained policy: an MLP with tanh hidden layers over the normalized
     observation. throttle_scale is the throttle that action 1 commanded in
-    training (NeoRacerEnvConfig.throttle_scale)."""
+    training (NeoRacerEnvConfig.max_speed)."""
 
     layers: tuple[Layer, ...]
     obs_mean: npt.NDArray[np.float64]  # (OBS_DIM,)

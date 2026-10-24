@@ -23,7 +23,7 @@ Hold the right bumper while it drives, and release it to stop. The car also stop
 - `REQUIRE_DEADMAN` drives only while the right bumper is held.
 - `LOG = "drive.csv"` records each action in a CSV file: the eight ranges and the speed that the policy read, its last action and the new one, and the command that the car got. `policy.LOG_COLUMNS` names the columns. `python3 -m examples.drive_v2 --log sim.csv` writes the same log in simulation, to compare with the car's.
 
-The track needs closed walls about a metre apart, taller than the LiDAR, which sits about 19 cm above the floor. The policy has only seen `loop_corridor`, a corridor 1 m wide around a 6 m by 4 m block with chamfered corners. A different width or tighter corners may need retraining.
+The track needs closed walls about a meter apart, taller than the LiDAR, which sits about 19 cm above the floor. The policy has only seen `loop_corridor`, a corridor 1 m wide around a 6 m by 4 m block with chamfered corners. A different width or tighter corners may need retraining.
 
 The policy has only driven in simulation. The model is fitted to one reference car's calibration runs, but the real LiDAR, encoder and timing may differ. For a first run, set a low `SPEED_LIMIT`, use an open space, and keep a hand on the bumper.
 

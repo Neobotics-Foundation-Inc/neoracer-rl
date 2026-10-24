@@ -4,6 +4,7 @@ that driver.py takes on the car. It needs numpy only, so it runs on the car.
 
 Frame: the car's, +X forward, +Y left. An angle is counterclockwise from the
 front, unless its name says otherwise; a racecar_core scan runs clockwise.
+Quantities are in SI units unless a name says otherwise.
 
 The policy sees OBS_DIM numbers, all of which the car measures:
 - the range (m) in each of BEAM_DEGREES, from the LiDAR's scan: the nearest
@@ -21,36 +22,41 @@ from typing import Literal, assert_never
 import numpy as np
 import numpy.typing as npt
 
-type Ranges = npt.NDArray[np.float64]  # (..., len(BEAM_DEGREES)) m
-type Observation = npt.NDArray[np.float64]  # (..., OBS_DIM)
-type Action = npt.NDArray[np.float64]  # (..., 2): throttle, steering (+ = left)
+type Ranges = npt.NDArray[np.float64]
+"""Shape (..., len(BEAM_DEGREES))."""
+type Observation = npt.NDArray[np.float64]
+"""Shape (..., OBS_DIM)."""
+type Action = npt.NDArray[np.float64]
+"""Shape (..., 2): the throttle, and the steering, + to the left."""
 type Direction = Literal["counterclockwise", "clockwise"]
 
 BEAM_DEGREES = (0, 45, 90, 135, 180, 225, 270, 315)
-MAX_RANGE = 5.0  # m
+MAX_RANGE = 5.0
 WINDOW_DEGREES = 2.0
-CONTROL_PERIOD = 1 / 30  # s
+CONTROL_PERIOD = 1 / 30
 OBS_DIM = len(BEAM_DEGREES) + 3
-# The reference car's steady speed (m/s) at each throttle, from
-# neoracer_spec.racecar_neo_v2's Drive.steady_speed.
 STEADY_SPEED = ((0.0, 0.0), (0.25, 0.721), (0.5, 0.833), (1.0, 1.07))
-# A scan that has not changed for this long (s) is stale: the LiDAR has
-# stopped, and racecar_core repeats its last scan. The head turns in 0.135 s,
-# and a real scan's noise changes it every turn.
+"""The reference car's steady speed at each throttle, from
+neoracer_spec.racecar_neo_v2's Drive.steady_speed."""
 STALE_SCAN = 0.5
-# The columns of driver.py's log, a row for each action: what the policy
-# read, its last action and the new one, and the command that the car got.
+"""A scan that has not changed for this long is stale: the LiDAR has
+stopped, and racecar_core repeats its last scan. The head turns in 0.135 s,
+and a real scan's noise changes it every turn."""
 LOG_COLUMNS = (
-    "time",  # s since the program started
-    *(f"range_{degrees}" for degrees in BEAM_DEGREES),  # m, not mirrored
-    "speed",  # m/s
+    "time",
+    *(f"range_{degrees}" for degrees in BEAM_DEGREES),
+    "speed",
     "last_throttle",
     "last_steering",
     "throttle",
     "steering",
-    "speed_command",  # racecar_core's set_speed_angle
+    "speed_command",
     "angle_command",
 )
+"""The columns of driver.py's log, a row for each action: the time since
+the program started, what the policy read (the ranges not mirrored), its last
+action and the new one, and the command that set_speed_angle sent the
+car."""
 
 
 def ranges_from_scan(samples_cm: npt.ArrayLike) -> Ranges:
@@ -99,8 +105,10 @@ def steady_speed(throttle: float) -> float:
 
 @dataclass(frozen=True)
 class Layer:
-    weight: npt.NDArray[np.float64]  # (inputs, outputs)
-    bias: npt.NDArray[np.float64]  # (outputs,)
+    weight: npt.NDArray[np.float64]
+    """Shape (inputs, outputs)."""
+    bias: npt.NDArray[np.float64]
+    """Shape (outputs,)."""
 
 
 @dataclass(frozen=True)
@@ -110,9 +118,12 @@ class Policy:
     training (NeoRacerEnvConfig.max_speed)."""
 
     layers: tuple[Layer, ...]
-    obs_mean: npt.NDArray[np.float64]  # (OBS_DIM,)
-    obs_var: npt.NDArray[np.float64]  # (OBS_DIM,)
-    obs_clip: float  # standard deviations
+    obs_mean: npt.NDArray[np.float64]
+    """Shape (OBS_DIM,)."""
+    obs_var: npt.NDArray[np.float64]
+    """Shape (OBS_DIM,)."""
+    obs_clip: float
+    """In standard deviations."""
     throttle_scale: float
 
 
@@ -151,8 +162,10 @@ def act(policy: Policy, obs: Observation) -> Action:
 class Driver:
     """The car program between two updates."""
 
-    action: Action  # (2,) the policy's last action
-    wait: float  # s until the next one; at most 0 means now
+    action: Action
+    """The policy's last action, shape (2,)."""
+    wait: float
+    """The time until the next one; at most 0 means now."""
 
 
 START = Driver(action=np.zeros(2), wait=0.0)
@@ -163,7 +176,8 @@ class Scan:
     """The LiDAR's last scan and how long it has stayed the same."""
 
     samples_cm: npt.NDArray[np.float64]
-    age: float  # s since it changed
+    age: float
+    """The time since it changed."""
 
 
 NO_SCAN = Scan(samples_cm=np.zeros(0), age=0.0)

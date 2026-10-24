@@ -13,6 +13,8 @@ from the sensordata that the backend returns, with the functions that
 NeoRacerEnv uses, so a row on the Cpu backend steps like NeoRacerEnv, bit
 for bit, from the same spawn.
 
+Quantities are in SI units unless a name says otherwise.
+
 The env holds no episode state. reset returns a BatchState, and step takes
 one and returns the next:
 
@@ -55,21 +57,26 @@ from .neoracer_env import (
     substeps_per_action,
 )
 
-type Observations = npt.NDArray[np.float32]  # shape (nbatch, OBS_DIM)
-type Rows = npt.NDArray[np.float64]  # shape (nbatch,)
-type Mask = npt.NDArray[np.bool_]  # shape (nbatch,)
-type Ints = npt.NDArray[np.int64]  # shape (nbatch,)
+type Observations = npt.NDArray[np.float32]
+"""Shape (nbatch, OBS_DIM)."""
+type Rows = npt.NDArray[np.float64]
+"""Shape (nbatch,)."""
+type Mask = npt.NDArray[np.bool_]
+"""Shape (nbatch,)."""
+type Ints = npt.NDArray[np.int64]
+"""Shape (nbatch,)."""
 
-# The episode end of a row as a code: 0 while the episode goes on, else
-# REASONS[code - 1].
 REASONS: tuple[TerminationReason, ...] = ("rollover", "crash", "stuck", "lap_complete")
+"""The ends of an episode. A row's end code is 0 while its episode goes on,
+else k + 1 for the end REASONS[k]."""
 
 
 @dataclass(frozen=True)
 class Cpu:
     """Step on the CPU with mujoco.rollout."""
 
-    nthread: int  # threads; 0 steps every row on the calling thread
+    nthread: int
+    """0 steps every row on the calling thread."""
 
 
 @dataclass(frozen=True)
@@ -84,13 +91,15 @@ type Backend = Cpu | Warp
 class ProgressRows:
     """Progress (see neoracer_env.Progress) of every row."""
 
-    angle: Rows  # rad; angle of the car around the loop center, at the last step
-    total: Rows  # rad; cumulative progress in this episode
-    delta: Rows  # rad; progress in the last step
-    steps: npt.NDArray[np.int64]  # steps in this episode, shape (nbatch,)
-    # rad; the totals of the last window_len steps, as a ring: column
-    # k % window_len holds the total after step k of the episode.
-    window: npt.NDArray[np.float64]  # shape (nbatch, window_len)
+    angle: Rows
+    total: Rows
+    delta: Rows
+    steps: Ints
+    """The steps in this episode."""
+    window: npt.NDArray[np.float64]
+    """The totals of the last window_len steps, shape (nbatch, window_len),
+    as a ring: column k % window_len holds the total after step k of the
+    episode."""
 
 
 def start_rows(angle: Rows, window_len: int) -> ProgressRows:
@@ -139,27 +148,40 @@ class BatchState:
     """The state of every row. sim and spawn are the backend's batch state:
     an array of mjSTATE_FULLPHYSICS rows on Cpu, a batched mjx.Data on Warp."""
 
-    sim: Any  # the physics state of each row
-    spawn: Any  # the state each row starts over from
-    spawn_obs: Observations  # the first observation from spawn
-    spawn_angle: Rows  # rad; lap_angle at spawn
-    spawn_track: Ints  # the index of each row's track at spawn
-    obs: Observations  # the observation of the current state
-    track: Ints  # the index of each row's track, in the env's pool
+    sim: Any
+    """The physics state of each row."""
+    spawn: Any
+    """The state each row starts over from."""
+    spawn_obs: Observations
+    """The first observation from spawn."""
+    spawn_angle: Rows
+    """lap_angle at spawn."""
+    spawn_track: Ints
+    """The index of each row's track at spawn."""
+    obs: Observations
+    """The observation of the current state."""
+    track: Ints
+    """The index of each row's track, in the env's pool."""
     progress: ProgressRows
-    loop: speed_loop.SpeedLoopState | None  # every row's speed loop, if the car has one
-    spawn_drive: Rows  # rad; the drivetrain's angle at spawn
+    loop: speed_loop.SpeedLoopState | None
+    """Every row's speed loop, if the car has one."""
+    spawn_drive: Rows
+    """The drivetrain's angle at spawn."""
 
 
 @dataclass(frozen=True)
 class StepResult:
     """What one step gives, before any row starts over."""
 
-    obs: Observations  # the observation after the step
+    obs: Observations
+    """The observation after the step."""
     reward: Rows
-    reason: npt.NDArray[np.int8]  # episode end code, see REASONS
-    truncated: Mask  # the episode reached max_episode_steps
-    lap_frac: Rows  # laps; total progress / 2 pi, negative if the car drove backward
+    reason: npt.NDArray[np.int8]
+    """The code of the episode's end (REASONS)."""
+    truncated: Mask
+    """The episode reached max_episode_steps."""
+    lap_frac: Rows
+    """The total progress / 2 pi in laps, negative if the car drove backward."""
 
     @property
     def done(self) -> Mask:
@@ -224,12 +246,10 @@ class NeoRacerBatch:
                 assert_never(backend)
         self._nstep = substeps_per_action(config, model)
         limits = contract.actuator_limits(model, self.scene.car)
-        self._max_steer = limits.steer_rad  # rad
+        self._max_steer = limits.steer_rad
         self._window_len = stuck_window_len(config)
-        # The car at rest on the ground of each track, before the offset.
-        self._settled = []
-        for arena in self._arenas:
-            self._settled.append(sim.settle(arena.scene.model))
+        self._settled = [sim.settle(arena.scene.model) for arena in self._arenas]
+        """The car at rest on the ground of each track, before the offset."""
 
     def _lap_angles(self, track: Ints, sensordata: npt.NDArray) -> Rows:
         """lap_angle of each row on its own track, shape (nbatch,)."""

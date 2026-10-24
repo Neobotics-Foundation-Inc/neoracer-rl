@@ -55,8 +55,7 @@ CONFIG = NeoRacerEnvConfig(
 )
 """The env on the V2, whose model holds its own speed: action[0] times
 max_speed is its throttle."""
-# The physics ranges of training: wide enough for the policy to drive a car
-# that differs from the model, not measured on the real car.
+
 PHYSICS = PhysicsRanges(
     wheel_friction=Range(0.6, 1.2),
     chassis_mass=Range(0.8, 1.3),
@@ -64,9 +63,12 @@ PHYSICS = PhysicsRanges(
     steer_stiffness=Range(0.7, 1.4),
     lidar_rate=Range(0.95, 1.05),
 )
+"""The physics ranges of training: wide enough for the policy to drive a car
+that differs from the model, not measured on the real car."""
 
 type Array = npt.NDArray[np.float64]
-type EnvObservations = npt.NDArray[np.float32]  # (N, neoracer_env.OBS_DIM)
+type EnvObservations = npt.NDArray[np.float32]
+"""Shape (N, neoracer_env.OBS_DIM)."""
 
 
 @dataclass(frozen=True)
@@ -75,10 +77,14 @@ class SensingParams:
     its LiDAR, its encoder's error and its late actions. Each episode draws
     its own value from each range."""
 
-    range_noise: float = 0.02  # m, the standard deviation of a range
-    dropout: float = 0.02  # the chance that a beam reads no return
-    speed_scale: Range = Range(0.95, 1.2)  # the encoder's speed over the wheels'
-    late: float = 0.5  # the share of episodes whose actions arrive a step late
+    range_noise: float = 0.02
+    """The standard deviation of a range (m)."""
+    dropout: float = 0.02
+    """The chance that a beam reads no return."""
+    speed_scale: Range = Range(0.95, 1.2)
+    """The encoder's speed over the wheels'."""
+    late: float = 0.5
+    """The share of episodes whose actions arrive a step late."""
 
     def __post_init__(self) -> None:
         if self.range_noise < 0.0:
@@ -91,14 +97,20 @@ class SensingParams:
 class Sensing:
     """What each car shows the policy, between two control steps."""
 
-    scan: Array  # (N, beams) m, the model's last scan of true ranges
-    # racecar_core repeats a scan until the next, with its noise and its lost
-    # beams.
-    error: Array  # (N, beams) m, the noise of its ranges
-    lost: npt.NDArray[np.bool_]  # (N, beams) its beams with no return
-    speed_scale: Array  # (N,)
-    late: npt.NDArray[np.bool_]  # (N,) the car's actions arrive a step late
-    last_action: Array  # (N, ACTION_DIM) the policy's last action, clipped
+    scan: Array
+    """The model's last scan of true ranges (m), shape (N, beams).
+    racecar_core repeats a scan until the next, with its noise and its lost
+    beams."""
+    error: Array
+    """The noise of its ranges (m), shape (N, beams)."""
+    lost: npt.NDArray[np.bool_]
+    """Its beams with no return, shape (N, beams)."""
+    speed_scale: Array
+    """Shape (N,)."""
+    late: npt.NDArray[np.bool_]
+    """The car's actions arrive a step late, shape (N,)."""
+    last_action: Array
+    """The policy's last action, clipped, shape (N, ACTION_DIM)."""
 
 
 def true_ranges(obs: EnvObservations) -> Array:

@@ -70,40 +70,54 @@ from neoracer_rl.envs.neoracer_env import (
     Tracks,
 )
 
-ACTION_DIM = 2  # (speed, steer), see neoracer_env.py
+ACTION_DIM = 2
+"""(speed, steer), as neoracer_env.py gives them."""
 
-# The physics ranges of --random-physics: an example to start from, wide
-# enough to see an effect, not measured on the real car.
 RANDOM_PHYSICS = PhysicsRanges(
     wheel_friction=Range(0.3, 1.2),
     chassis_mass=Range(0.7, 1.5),
     motor_torque=Range(0.5, 1.5),
     steer_stiffness=Range(0.5, 2.0),
 )
+"""The physics ranges of --random-physics: an example to start from, wide
+enough to see an effect, not measured on the real car."""
 
-type ObsBatch = npt.NDArray[np.float64]  # shape (batch, obs_dim)
+type ObsBatch = npt.NDArray[np.float64]
+"""Shape (batch, obs_dim)."""
 
 
 @dataclass(frozen=True)
 class PPOParams:
     """Hyperparameters of PPO. One update uses num_envs * rollout_steps env steps."""
 
-    rollout_steps: int = 256  # env steps per environment between two updates
-    gamma: float = 0.99  # discount per env step (30 Hz), horizon ~ 1/(1-gamma) steps
-    gae_lambda: float = 0.95  # GAE weight between 1-step (0) and Monte Carlo (1)
-    clip_eps: float = 0.2  # PPO clip range of the probability ratio
-    learning_rate: float = 3e-4  # Adam step size
-    epochs: int = 10  # passes over each rollout batch
-    minibatches: int = 4  # minibatches per epoch
-    value_coef: float = 0.5  # weight of the value loss in the total loss
-    entropy_coef: float = 0.0  # weight of the entropy bonus in the total loss
-    max_grad_norm: float = 0.5  # gradient clip (global L2 norm)
-    hidden: tuple[int, ...] = (64, 64)  # hidden layer widths of both MLPs
-    # Initial log standard deviation of each action. With -0.5 (std 0.6), the
-    # policy did not find the left turn at the first corner in 300k steps.
-    # With 0.0 (std 1), it completed laps after ~100k steps.
+    rollout_steps: int = 256
+    """Env steps per environment between two updates."""
+    gamma: float = 0.99
+    """The discount per env step (30 Hz), a horizon of about 1/(1-gamma) steps."""
+    gae_lambda: float = 0.95
+    """GAE's weight between 1-step (0) and Monte Carlo (1)."""
+    clip_eps: float = 0.2
+    """PPO's clip range of the probability ratio."""
+    learning_rate: float = 3e-4
+    """Adam's step size."""
+    epochs: int = 10
+    """Passes over each rollout batch."""
+    minibatches: int = 4
+    """Minibatches per epoch."""
+    value_coef: float = 0.5
+    """The weight of the value loss in the total loss."""
+    entropy_coef: float = 0.0
+    """The weight of the entropy bonus in the total loss."""
+    max_grad_norm: float = 0.5
+    """The gradient clip, on the global L2 norm."""
+    hidden: tuple[int, ...] = (64, 64)
+    """The hidden layer widths of both MLPs."""
     init_log_std: float = 0.0
-    obs_clip: float = 10.0  # normalized observation clip, in standard deviations
+    """The initial log standard deviation of each action. With -0.5 (std
+    0.6), the policy did not find the left turn at the first corner in 300k
+    steps. With 0.0 (std 1), it completed laps after about 100k steps."""
+    obs_clip: float = 10.0
+    """The normalized observation's clip, in standard deviations."""
 
     def __post_init__(self) -> None:
         if not 0.0 < self.gamma <= 1.0 or not 0.0 <= self.gae_lambda <= 1.0:
@@ -131,16 +145,21 @@ class PPOParams:
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class Dense:
-    weight: jax.Array  # shape (inputs, outputs)
-    bias: jax.Array  # shape (outputs,)
+    weight: jax.Array
+    """Shape (inputs, outputs)."""
+    bias: jax.Array
+    """Shape (outputs,)."""
 
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class ActorCritic:
-    actor: tuple[Dense, ...]  # obs -> action mean
-    critic: tuple[Dense, ...]  # obs -> value
-    log_std: jax.Array  # shape (ACTION_DIM,), log standard deviation of each action
+    actor: tuple[Dense, ...]
+    """obs -> action mean."""
+    critic: tuple[Dense, ...]
+    """obs -> value."""
+    log_std: jax.Array
+    """The log standard deviation of each action, shape (ACTION_DIM,)."""
 
 
 def init_mlp(
@@ -214,9 +233,12 @@ def greedy_action(net: ActorCritic, obs: jax.Array) -> jax.Array:
 class ObsStats:
     """Running mean and variance of the raw observations."""
 
-    mean: npt.NDArray[np.float64]  # shape (obs_dim,)
-    var: npt.NDArray[np.float64]  # shape (obs_dim,), population variance
-    count: float  # observations seen; 0 = no data yet
+    mean: npt.NDArray[np.float64]
+    """Shape (obs_dim,)."""
+    var: npt.NDArray[np.float64]
+    """The population variance, shape (obs_dim,)."""
+    count: float
+    """The observations seen; 0 before any."""
 
 
 def empty_obs_stats(obs_dim: int = OBS_DIM) -> ObsStats:
@@ -287,11 +309,15 @@ def clipped_surrogate(
 class Batch:
     """Flat training samples. All fields have the same first axis."""
 
-    obs: jax.Array  # normalized observation, shape (B, OBS_DIM)
-    action: jax.Array  # unclipped sampled action, shape (B, ACTION_DIM)
-    log_prob: jax.Array  # log probability of action under the rollout policy
+    obs: jax.Array
+    """The normalized observation, shape (B, OBS_DIM)."""
+    action: jax.Array
+    """The unclipped sampled action, shape (B, ACTION_DIM)."""
+    log_prob: jax.Array
+    """The log probability of action under the rollout policy."""
     advantage: jax.Array
-    target: jax.Array  # value target (GAE return)
+    target: jax.Array
+    """The value target, GAE's return."""
 
 
 @jax.tree_util.register_dataclass
@@ -299,9 +325,12 @@ class Batch:
 class LossInfo:
     policy_loss: jax.Array
     value_loss: jax.Array
-    entropy: jax.Array  # nats, sum over the action dimensions
-    approx_kl: jax.Array  # estimate of KL(old || new), nats
-    clip_frac: jax.Array  # fraction of samples with |ratio - 1| > clip_eps
+    entropy: jax.Array
+    """The sum over the action dimensions, in nats."""
+    approx_kl: jax.Array
+    """An estimate of KL(old || new), in nats."""
+    clip_frac: jax.Array
+    """The share of samples with |ratio - 1| > clip_eps."""
 
 
 def ppo_loss(
@@ -378,9 +407,11 @@ type Outcome = TerminationReason | Literal["truncated"]
 @dataclass(frozen=True)
 class EpisodeResult:
     episode_return: float
-    lap_frac: float  # laps at the last step; negative if the car drove backward
+    lap_frac: float
+    """Laps at the last step, negative if the car drove backward."""
     outcome: Outcome
-    steps: int  # env steps (30 Hz)
+    steps: int
+    """Env steps, at 30 Hz."""
 
 
 def ended(
@@ -399,9 +430,12 @@ def ended(
     }
 
 
-type EnvObsBatch = npt.NDArray[np.float32]  # shape (N, OBS_DIM), the env's
-type ActionBatch = npt.NDArray[np.float64]  # shape (N, ACTION_DIM)
-type Rows = npt.NDArray[np.bool_]  # shape (N,)
+type EnvObsBatch = npt.NDArray[np.float32]
+"""The env's observations, shape (N, OBS_DIM)."""
+type ActionBatch = npt.NDArray[np.float64]
+"""Shape (N, ACTION_DIM)."""
+type Rows = npt.NDArray[np.bool_]
+"""Shape (N,)."""
 
 
 class Interface[S](Protocol):
@@ -461,11 +495,15 @@ class Exact:
 class RolloutState[S]:
     """The state that a rollout carries to the next rollout."""
 
-    env: BatchState  # the episode of each env
-    episode_return: npt.NDArray[np.float64]  # return so far of each env, shape (N,)
-    episode_steps: npt.NDArray[np.int64]  # steps so far of each env, shape (N,)
+    env: BatchState
+    """The episode of each env."""
+    episode_return: npt.NDArray[np.float64]
+    """The return so far of each env, shape (N,)."""
+    episode_steps: npt.NDArray[np.int64]
+    """The steps so far of each env, shape (N,)."""
     stats: ObsStats
-    carry: S  # what the interface carries to the next step
+    carry: S
+    """What the interface carries to the next step."""
 
 
 def _outcome(info: EnvInfo) -> Outcome:
@@ -558,9 +596,11 @@ def collect_rollout[S](
 class UpdateLog:
     update: int
     env_steps: int
-    episodes: tuple[EpisodeResult, ...]  # episodes that ended in this rollout
+    episodes: tuple[EpisodeResult, ...]
+    """The episodes that ended in this rollout."""
     loss: LossInfo
-    action_std: tuple[float, ...]  # standard deviation of each action
+    action_std: tuple[float, ...]
+    """The standard deviation of each action."""
 
 
 def format_log(log: UpdateLog, steps_per_s: float) -> str:
@@ -680,7 +720,8 @@ def load_policy(path: str) -> tuple[ActorCritic, ObsStats]:
 class Trained:
     net: ActorCritic
     stats: ObsStats
-    params: PPOParams  # obs_clip must be the training value
+    params: PPOParams
+    """Its obs_clip must be the training value."""
 
 
 @dataclass(frozen=True)

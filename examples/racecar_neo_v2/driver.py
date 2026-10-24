@@ -22,27 +22,28 @@ sys.path.insert(0, "../../library")
 import policy
 import racecar_core  # ty: ignore[unresolved-import]
 
-# The share of the policy's throttle that the car gets, in (0, 1].
 SPEED_LIMIT = 1.0
-# "clockwise" drives the other way round: the policy sees the scan and
-# steers mirrored, left for right, as the car is close to symmetric.
+"""The share of the policy's throttle that the car gets, in (0, 1]."""
 DIRECTION: policy.Direction = "counterclockwise"
-# Drive only while the right bumper is held.
+""""clockwise" drives the other way round: the policy sees the scan and
+steers mirrored, left for right, as the car is close to symmetric."""
 REQUIRE_DEADMAN = True
-# A CSV file to record each action in, with policy.LOG_COLUMNS, or None.
+"""Drive only while the right bumper is held."""
 LOG: str | None = None
+"""A CSV file to record each action in, with policy.LOG_COLUMNS, or None."""
 
 rc = racecar_core.create_racecar()
 POLICY = policy.load(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "v2_policy.npz")
 )
-# A racecar_core without the encoder's speed gives the steady speed of the
-# last throttle instead.
 ENCODER = hasattr(rc.physics, "get_encoder_speed")
+"""Whether racecar_core gives the encoder's speed. Without it, speed() gives
+the steady speed of the last throttle."""
 
 driver = policy.START
 scan = policy.NO_SCAN
-clock = 0.0  # s since start
+clock = 0.0
+"""The time (s) since start."""
 
 
 def speed() -> float:

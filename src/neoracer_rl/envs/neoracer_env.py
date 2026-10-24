@@ -7,6 +7,7 @@ no physics, sensors or actuator mappings. The classical controllers in
 neoracer_mujoco.control drive the same simulator.
 
 Frame: +X forward, +Y left, +Z up (see neoracer-mujoco's assets/neoracer.xml).
+Quantities are in SI units unless a name says otherwise.
 
 Track (config.tracks): LoopCorridor, assets/tracks/loop_corridor.xml, or
 GeneratedTracks, a pool of tracks from neoracer_mujoco.track_generation. With
@@ -120,21 +121,23 @@ from neoracer_mujoco.track_generation import (
     to_spec,
 )
 
-# The progress around the world origin, the lap and the reward are specific
-# to the geometry of this one track.
 _TRACK = os.path.join(assets.TRACK_DIR, "loop_corridor.xml")
+"""loop_corridor.xml. The progress around the world origin, the lap and the
+reward are specific to its geometry."""
 
-# The wall boxes of a generated track: more than the 161 that any of 240
-# tracks needed, so that every track of a pool has the same sizes, as a batch
-# with one track per row needs.
 WALL_BOXES = 192
+"""The wall boxes of a generated track: more than the 161 that any of 240
+tracks needed, so that every track of a pool has the same sizes, as a batch
+with one track per row needs."""
 
 NEORACER = neoracer_params()
 """The NeoRacer's settings beside its model, from its spec."""
 
 OBS_DIM = 20
-type Observation = npt.NDArray[np.float32]  # shape (OBS_DIM,), see module docstring
-type SensorData = npt.NDArray[np.float64]  # shape (..., nsensordata)
+type Observation = npt.NDArray[np.float32]
+"""Shape (OBS_DIM,), in the layout of the module docstring."""
+type SensorData = npt.NDArray[np.float64]
+"""Shape (..., nsensordata)."""
 
 _ACTION_LOW = np.array([-1.0, -1.0], dtype=np.float32)
 _ACTION_HIGH = np.array([1.0, 1.0], dtype=np.float32)
@@ -145,12 +148,17 @@ type TerminationReason = Literal["rollover", "crash", "stuck", "lap_complete"]
 class EnvInfo(TypedDict):
     """The info dict of reset() and step(). gymnasium requires a dict."""
 
-    progress_rad: float  # rad; cumulative signed progress in this episode
-    lap_frac: float  # laps; progress_rad / 2 pi, negative if the car drove backward
-    speed_ms: float  # m/s; estimated_speed, observation [19]
-    upright_cos: float  # cos(tilt) of the car body
-    contact: bool  # a car geom touched a wall in this step
-    episode_time_s: float  # s
+    progress_rad: float
+    """The signed progress in this episode."""
+    lap_frac: float
+    """progress_rad / 2 pi in laps, negative if the car drove backward."""
+    speed_ms: float
+    """estimated_speed, observation [19]."""
+    upright_cos: float
+    """cos(tilt) of the car body."""
+    contact: bool
+    """A car geom touched a wall in this step."""
+    episode_time_s: float
     termination_reason: TerminationReason | None
 
 
@@ -159,23 +167,29 @@ class RewardConfig:
     """Reward weights. Nobody has tuned them yet. See the module docstring for
     the formula."""
 
-    progress_weight: float = 1.0  # reward per radian of signed progress around the loop
-    rollover_penalty: float = 10.0  # one-time penalty on rollover termination
-    # One-time penalties on crash and stuck termination. Equal, so a car that
-    # tries the first corner and hits the wall returns more than a car that
-    # does not move.
+    progress_weight: float = 1.0
+    """Reward per radian of signed progress around the track."""
+    rollover_penalty: float = 10.0
+    """One-time penalty on rollover termination."""
     crash_penalty: float = 5.0
+    """One-time penalty on crash termination. It equals stuck_penalty, so a
+    car that tries the first corner and hits the wall returns more than a car
+    that does not move."""
     stuck_penalty: float = 5.0
-    lap_bonus: float = 10.0  # one-time bonus on successful lap completion
+    """One-time penalty on stuck termination."""
+    lap_bonus: float = 10.0
+    """One-time bonus on a completed lap."""
 
 
 @dataclass(frozen=True)
 class TerminationConfig:
     """Thresholds that end an episode. See termination."""
 
-    upright_rollover_cos: float = 0.5  # cos(tilt) below this = rolled over
-    stuck_window_s: float = 4.0  # s
-    stuck_progress_rad: float = 0.05  # rad, min net progress over the window
+    upright_rollover_cos: float = 0.5
+    """The car has rolled over when cos(tilt) is below this."""
+    stuck_window_s: float = 4.0
+    stuck_progress_rad: float = 0.05
+    """The car is stuck when its net progress over the window is less."""
 
 
 @dataclass(frozen=True)
@@ -186,16 +200,18 @@ class ObservationBounds:
     the elliptic friction cone and impratio=10.
     If the track, the spawn range or the car changes, measure the peaks again."""
 
-    lidar_m: float = 50.0  # m
-    accel_m_s2: float = 1000.0  # m/s^2; the peak, in a crash, is ~290 m/s^2
-    gyro_rad_s: float = 100.0  # rad/s; the peak is ~7 rad/s
-    # rad; the peak is ~0.43 rad. MuJoCo's 0.45 rad joint limit is soft, so a
-    # crash could push past it.
+    lidar_m: float = 50.0
+    accel_m_s2: float = 1000.0
+    """The peak, in a crash, is about 290 m/s^2."""
+    gyro_rad_s: float = 100.0
+    """The peak is about 7 rad/s."""
     steer_rad: float = 2.0
-    # m/s; the same limit as test_top_speed_bounded in neoracer-mujoco's
-    # validation/test_conformance.py. The peak is ~3.5 m/s; the motor's free
-    # speed is 4.3 m/s.
+    """The peak is about 0.43 rad. MuJoCo's 0.45 rad joint limit is soft, so
+    a crash could push past it."""
     speed_m_s: float = 40.0
+    """The same limit as test_top_speed_bounded in neoracer-mujoco's
+    validation/test_conformance.py. The peak is about 3.5 m/s; the motor's
+    free speed is 4.3 m/s."""
 
 
 @dataclass(frozen=True)
@@ -208,7 +224,8 @@ class GeneratedTracks:
     """A pool of generated tracks: the first count seeds, from first_seed
     on, that give a track of this difficulty."""
 
-    difficulty: Difficulty = 1  # 0 gentle and wide to 3 tight and narrow
+    difficulty: Difficulty = 1
+    """From 0, gentle and wide, to 3, tight and narrow."""
     count: int = 16
     first_seed: int = 0
 
@@ -222,11 +239,12 @@ type Tracks = LoopCorridor | GeneratedTracks
 
 @dataclass(frozen=True)
 class NeoRacerEnvConfig:
-    """Environment configuration. The track is always loop_corridor.xml."""
+    """The car, its tracks, the control rate, the reward and the ends of an
+    episode."""
 
     car_path: str = assets.DEFAULT_CAR
     tracks: Tracks = LoopCorridor()
-    control_hz: float = 30.0  # Hz
+    control_hz: float = 30.0
     max_speed: float = 1.0
     """The share of the car's full speed that action[0] = 1 asks for, in
     (0, 1], as racecar_core's set_max_speed sets it. The NeoRacer's full speed
@@ -237,13 +255,14 @@ class NeoRacerEnvConfig:
     the NeoRacer's. Its speed loop runs beside the model; a car whose model
     holds its own speed has none, as the RACECAR Neo V2's does
     (racecar_neo_v2_params)."""
-    max_episode_steps: int = 1800  # 60 s at 30 Hz
+    max_episode_steps: int = 1800
+    """60 s at 30 Hz."""
     obs_bounds: ObservationBounds = ObservationBounds()
     spawn: SpawnRange = SpawnRange()
     termination: TerminationConfig = TerminationConfig()
     reward: RewardConfig = RewardConfig()
-    # The range of each factor of the car's physics, drawn at each reset.
     physics: PhysicsRanges = PhysicsRanges()
+    """The range of each factor of the car's physics, drawn at each reset."""
 
     def __post_init__(self) -> None:
         if not 0.0 < self.max_speed <= 1.0:
@@ -255,7 +274,8 @@ class Arena:
     """One track of the env, with the car on it, at the car's spawn."""
 
     scene: Scene
-    layout: LoopCorridor | Track  # what lap_angle measures progress on
+    layout: LoopCorridor | Track
+    """What lap_angle measures progress on."""
 
 
 def arenas(config: NeoRacerEnvConfig, visuals: bool) -> tuple[Arena, ...]:
@@ -305,9 +325,8 @@ def lap_angle(arena: Arena, sensordata: SensorData) -> npt.NDArray[np.float64]:
 def loop_scene(config: NeoRacerEnvConfig, visuals: bool) -> Scene:
     """The car of config on loop_corridor.xml, at the track's start. Without
     visuals, the car's meshes are left out: the physics and the sensors are
-    the same, and the model is smaller and faster (assets.compose)."""
-    # compose raises ValueError if the car has no free joint or misses an
-    # actuator or sensor.
+    the same, and the model is smaller and faster (assets.compose). Raise
+    ValueError if the car has no free joint or misses an actuator or sensor."""
     return assets.compose(
         mujoco.MjSpec.from_file(_TRACK), config.car_path, visuals=visuals
     )
@@ -393,13 +412,17 @@ def angle_around_center(
 
 @dataclass(frozen=True)
 class Progress:
-    """Signed progress of the car around the loop center (the world origin;
-    the track is symmetric about it). + is the forward-travel direction."""
+    """Signed progress of the car around the track, as lap_angle measures it:
+    2 pi is one lap. + is the forward-travel direction."""
 
-    angle: float  # rad; angle of the car around the center, at the last step
-    total: float  # rad; cumulative progress in this episode
-    delta: float  # rad; progress in the last step
-    window: tuple[float, ...]  # total at each of the last steps, oldest first
+    angle: float
+    """The car's lap_angle at the last step."""
+    total: float
+    """The progress in this episode."""
+    delta: float
+    """The progress in the last step."""
+    window: tuple[float, ...]
+    """total at each of the last steps, oldest first."""
 
 
 def start_progress(angle: float) -> Progress:
@@ -460,8 +483,8 @@ def reward(cfg: RewardConfig, delta: float, reason: TerminationReason | None) ->
 
 
 class NeoRacerEnv(gym.Env):
-    """Gymnasium environment driving the NeoRacer car around
-    assets/tracks/loop_corridor.xml.
+    """Gymnasium environment driving a car around the tracks of
+    config.tracks.
 
     __init__ compiles one MjModel, and no method changes it. reset() writes
     only MjData (mj_resetData, settle, spawn perturbation), so one episode
@@ -483,25 +506,26 @@ class NeoRacerEnv(gym.Env):
             raise ValueError(f"Unsupported render_mode: {render_mode!r}")
         self.render_mode = render_mode
 
-        # scene is the track of the episode. scene.car holds the car's parts
-        # as spec elements, which the env binds to self.data where it reads or
-        # writes them. scene.model keeps the physics of the XML; self.model
-        # has the physics of the episode. All tracks have the same sizes, so
-        # one MjData fits every one.
         self._arenas = arenas(config, visuals=render_mode is not None)
         self._arena = self._arenas[0]
         self.scene = self._arena.scene
+        """The track of the episode. scene.car holds the car's parts as spec
+        elements, which the env binds to self.data where it reads or writes
+        them. scene.model keeps the physics of the XML."""
         self.model = copy.deepcopy(self.scene.model)
+        """scene.model with the physics of the episode."""
         self.data = mujoco.MjData(self.model)
+        """The simulation's state. All tracks have the same sizes, so it fits
+        every one."""
         self.physics = physics.Physics()
         self._car = self.scene.car
 
         self._substeps_per_action = substeps_per_action(config, self.model)
-        # The true control period, after rounding to a whole number of
-        # physics substeps. It can differ slightly from 1/control_hz.
         self.effective_control_dt = self._substeps_per_action * float(
             self.model.opt.timestep
         )
+        """The true control period, a whole number of physics steps. It can
+        differ slightly from 1/control_hz."""
 
         self._limits = contract.actuator_limits(self.model, self._car)
         self.loop: speed_loop.SpeedLoopState | None = None

@@ -41,7 +41,8 @@ from examples.train_v2 import (
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
 
 BEAMS = len(policy.BEAM_DEGREES)
-EXACT = SensingParams(range_noise=0.0, dropout=0.0)  # the model's ranges as they are
+EXACT = SensingParams(range_noise=0.0, dropout=0.0)
+"""The model's ranges as they are."""
 
 
 def test_the_v2s_beams_show_a_new_scan_once_a_turn_of_the_head():

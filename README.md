@@ -89,8 +89,10 @@ Progress has to mean the same on both kinds of track. So the env keeps each comp
 ```python
 @dataclass(frozen=True)
 class Arena:
-    scene: Scene  # the car on the track, compiled
-    layout: LoopCorridor | Track  # what progress is measured on
+    scene: Scene
+    """The car on the track, compiled."""
+    layout: LoopCorridor | Track
+    """What lap_angle measures progress on."""
 ```
 
 `lap_angle(arena, sensordata)` computes progress from the layout:

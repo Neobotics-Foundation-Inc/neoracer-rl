@@ -38,6 +38,7 @@ import mujoco
 import numpy as np
 import numpy.typing as npt
 from neoracer_mujoco import batch, contract, physics, sim
+from neoracer_mujoco.track_generation import shortest_loop_distance
 
 from .neoracer_env import (
     NeoRacerEnvConfig,
@@ -103,12 +104,7 @@ def start_rows(angle: Rows, window_len: int) -> ProgressRows:
 
 def advance_rows(p: ProgressRows, angle: Rows) -> ProgressRows:
     """advance for every row."""
-    delta = angle - p.angle
-    delta = np.where(
-        delta > np.pi,
-        delta - 2.0 * np.pi,
-        np.where(delta < -np.pi, delta + 2.0 * np.pi, delta),
-    )
+    delta = shortest_loop_distance(angle - p.angle, 2.0 * np.pi)
     total = p.total + delta
     steps = p.steps + 1
     window = p.window.copy()

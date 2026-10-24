@@ -26,8 +26,10 @@ from pathlib import Path
 from typing import Any, assert_never, get_args
 
 import mujoco
-from neoracer_mujoco import sim
+import numpy as np
+from neoracer_mujoco import collision, sim
 from neoracer_mujoco.racecar_core_adapter import MujocoRacecar, racecar_neo_v2_params
+from neoracer_mujoco.track_generation import shortest_loop_distance
 
 from examples.racecar_neo_v2 import policy
 from examples.train_v2 import CAR
@@ -108,9 +110,9 @@ def drive(
         """Count the turn and the contacts up to the car's state now."""
         nonlocal angle, turned, contacts, touching
         now = float(neoracer_env.angle_around_center(model, car, data.sensordata))
-        turned += math.remainder(now - angle, 2.0 * math.pi)
+        turned += float(shortest_loop_distance(np.asarray(now - angle), 2 * math.pi))
         angle = now
-        touches = bool(data.bind_scalar(car.truth.wall_contact).data[0] > 0.0)
+        touches = collision.car_touches_wall(data, car)
         if touches and not touching:
             contacts += 1
         touching = touches

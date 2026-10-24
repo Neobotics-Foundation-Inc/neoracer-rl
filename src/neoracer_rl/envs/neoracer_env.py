@@ -96,6 +96,7 @@ from neoracer_mujoco.track_generation import (
     generate_track,
     lap_distance,
     settings_for_difficulty,
+    shortest_loop_distance,
     to_spec,
 )
 
@@ -435,11 +436,7 @@ def start_progress(angle: float) -> Progress:
 def advance(p: Progress, angle: float, window_len: int) -> Progress:
     """Progress after the car moved to angle (rad). Keeps the last
     window_len totals."""
-    delta = angle - p.angle
-    if delta > np.pi:
-        delta -= 2.0 * np.pi
-    elif delta < -np.pi:
-        delta += 2.0 * np.pi
+    delta = float(shortest_loop_distance(np.asarray(angle - p.angle), 2.0 * np.pi))
     total = p.total + delta
     return Progress(
         angle=angle, total=total, delta=delta, window=(*p.window, total)[-window_len:]

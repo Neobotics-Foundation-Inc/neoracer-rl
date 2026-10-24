@@ -40,6 +40,14 @@ def _reason(code: int | np.integer) -> TerminationReason | None:
     return REASONS[int(code) - 1] if code else None
 
 
+def test_a_row_step_of_half_a_lap_either_way_is_minus_pi():
+    """As in advance, half a lap forward or back is -pi in every row."""
+    half = np.pi / 2
+    old = np.array([0.0, np.pi, -half, half])
+    rows = advance_rows(start_rows(old, 5), np.array([np.pi, 0.0, half, -half]))
+    np.testing.assert_array_equal(rows.delta, -np.pi)
+
+
 def test_progress_rows_follow_advance_and_is_stuck():
     """Each row of advance_rows and stuck_rows is advance and is_stuck on
     that row's angles, including a row that starts over halfway."""

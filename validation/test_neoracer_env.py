@@ -212,15 +212,23 @@ def _wrap(angle: float) -> float:
 
 
 def test_advance_gives_a_step_in_minus_pi_to_pi():
-    """For any two angles, advance gives a delta in [-pi, pi]. The delta
+    """For any two angles, advance gives a delta in [-pi, pi). The delta
     differs from the plain difference only by a full turn."""
     rng = np.random.default_rng(0)
     for old, new in rng.uniform(-np.pi, np.pi, (2000, 2)):
         p = advance(start_progress(old), new, window_len=5)
-        assert -np.pi <= p.delta <= np.pi
+        assert -np.pi <= p.delta < np.pi
         turns = (p.delta - (new - old)) / LAP
         assert turns == pytest.approx(round(turns), abs=1e-9)
         assert p.total == p.delta and p.angle == new
+
+
+def test_a_step_of_half_a_lap_either_way_is_minus_pi():
+    """The delta lies in [-pi, pi), so half a lap forward or back is -pi."""
+    half = np.pi / 2
+    for old, new in [(0.0, np.pi), (np.pi, 0.0), (-half, half), (half, -half)]:
+        with case((old, new)):
+            assert advance(start_progress(old), new, window_len=5).delta == -np.pi
 
 
 def test_advance_adds_up_the_true_progress():

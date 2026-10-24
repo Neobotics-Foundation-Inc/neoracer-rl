@@ -40,11 +40,13 @@ from examples.train_ppo import (
     ObsStats,
     PPOParams,
     add_track_arguments,
+    ended,
     parse_track_arguments,
+    policy_arrays,
     train,
 )
 from neoracer_rl.envs import NeoRacerEnvConfig, neoracer_env
-from neoracer_rl.envs.neoracer_batch import REASONS, Cpu, NeoRacerBatch
+from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
 
 CAR = os.path.join(assets.ASSET_DIR, "racecar_neo_v2.xml")
 # The physics ranges of training: wide enough for the policy to drive a car
@@ -215,19 +217,13 @@ def save_policy(
 ) -> None:
     """The arrays of train_ppo.save_policy, which load_policy reads, and
     what policy.load needs beside them: obs_clip and throttle_scale."""
-    arrays: dict[str, np.ndarray] = {
-        "log_std": np.asarray(net.log_std),
-        "obs_mean": stats.mean,
-        "obs_var": stats.var,
-        "obs_count": np.array(stats.count),
-        "obs_clip": np.array(params.obs_clip),
-        "throttle_scale": np.array(config.throttle_scale),
-    }
-    for name, layers in (("actor", net.actor), ("critic", net.critic)):
-        for i, layer in enumerate(layers):
-            arrays[f"{name}.{i}.weight"] = np.asarray(layer.weight)
-            arrays[f"{name}.{i}.bias"] = np.asarray(layer.bias)
-    np.savez(path, allow_pickle=False, **arrays)
+    np.savez(
+        path,
+        allow_pickle=False,
+        **policy_arrays(net, stats),
+        obs_clip=np.array(params.obs_clip),
+        throttle_scale=np.array(config.throttle_scale),
+    )
 
 
 def evaluate(
@@ -254,15 +250,9 @@ def evaluate(
         state, out = env.step(state, applied)
         returns += out.reward
         steps += 1
-        for i in np.flatnonzero(out.done):
-            if int(i) not in results:
-                code = int(out.reason[i])
-                results[int(i)] = EpisodeResult(
-                    float(returns[i]),
-                    float(out.lap_frac[i]),
-                    REASONS[code - 1] if code else "truncated",
-                    steps,
-                )
+        # Each row's first episode, which started with the others.
+        for i, result in ended(out, returns, np.full(episodes, steps)).items():
+            results.setdefault(i, result)
     env.close()
     return [results[i] for i in range(episodes)]
 

@@ -35,6 +35,7 @@ Usage:
 import argparse
 import functools
 import os
+import re
 import time
 from collections import Counter
 from collections.abc import Sequence
@@ -618,6 +619,40 @@ def format_log(log: UpdateLog, steps_per_s: float) -> str:
         f"kl {float(log.loss.approx_kl):.4f} clip {float(log.loss.clip_frac):.2f} "
         f"std {log.action_std[0]:.2f},{log.action_std[1]:.2f}"
     )
+
+
+@dataclass(frozen=True)
+class LogLine:
+    """The numbers of one update's line of format_log that examples/experiments.py
+    reads back."""
+
+    env_steps: int
+    steps_per_s: int
+    episodes: int
+    laps: int
+    seeded: str
+    """The line without its speed: what the seed alone decides, whatever the
+    threads."""
+
+
+_LOG_LINE = re.compile(
+    r"update +\d+ +steps +(?P<steps>\d+)(?P<speed> +(?P<rate>\d+) steps/s)"
+    r" +episodes +(?P<episodes>\d+) .* laps +(?P<laps>\d+) crash"
+)
+
+
+def parse_log(line: str) -> LogLine | None:
+    """The numbers that format_log wrote in line, or None for a line that does
+    not begin as format_log's lines do. The fields after the laps are not
+    read."""
+    match = _LOG_LINE.match(line)
+    if match is None:
+        return None
+    steps, rate, episodes, laps = (
+        int(match[name]) for name in ("steps", "rate", "episodes", "laps")
+    )
+    seeded = line[: match.start("speed")] + line[match.end("speed") :]
+    return LogLine(steps, rate, episodes, laps, seeded)
 
 
 def train[S](

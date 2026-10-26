@@ -17,18 +17,24 @@ from examples.train_ppo import (
     ACTION_DIM,
     Batch,
     Dense,
+    EpisodeResult,
     Exact,
+    LogLine,
+    LossInfo,
     ObsStats,
     PPOParams,
     RolloutState,
+    UpdateLog,
     add_track_arguments,
     clipped_surrogate,
     collect_rollout,
     empty_obs_stats,
+    format_log,
     gae,
     init_actor_critic,
     init_opt_state,
     load_policy,
+    parse_log,
     parse_track_arguments,
     ppo_loss,
     ppo_update,
@@ -272,3 +278,26 @@ def test_the_track_options_name_the_tracks():
         parser = argparse.ArgumentParser()
         add_track_arguments(parser, default=default)
         assert parse_track_arguments(parser.parse_args(argv)) == tracks, argv
+
+
+def test_parse_log_reads_back_what_format_log_writes():
+    """parse_log gives the env steps, the speed, the episodes and the laps of
+    a line that format_log wrote, whether or not episodes ended in the
+    update, and the rest of the line, the same at any speed; and None for
+    any other line."""
+    loss = LossInfo(*(jnp.float32(0.0),) * 5)
+    episodes = (
+        EpisodeResult(16.3, 1.0, "lap_complete", 900),
+        EpisodeResult(-5.7, -0.1, "crash", 40),
+        EpisodeResult(10.1, 1.0, "lap_complete", 950),
+    )
+    for name, ended, laps in (("no episode", (), 0), ("three", episodes, 2)):
+        with case(name):
+            log = UpdateLog(7, 14336, ended, loss, (0.9, 1.1))
+            fast, slow = (
+                parse_log(format_log(log, 1234.4)),
+                parse_log(format_log(log, 87.0)),
+            )
+            assert slow is not None
+            assert fast == LogLine(14336, 1234, len(ended), laps, slow.seeded)
+    assert parse_log("[train_ppo] saved the policy to ppo.npz") is None

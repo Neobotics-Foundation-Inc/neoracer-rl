@@ -56,7 +56,6 @@ from neoracer_rl.envs import (
     NeoRacerEnvConfig,
 )
 from neoracer_rl.envs.neoracer_batch import (
-    REASONS,
     Backend,
     BatchState,
     Cpu,
@@ -64,12 +63,8 @@ from neoracer_rl.envs.neoracer_batch import (
     StepResult,
     Warp,
 )
-from neoracer_rl.envs.neoracer_env import (
-    OBS_DIM,
-    EnvInfo,
-    TerminationReason,
-    Tracks,
-)
+from neoracer_rl.envs.neoracer_env import EnvInfo, Tracks
+from neoracer_rl.envs.task import OBS_DIM
 
 ACTION_DIM = 2
 """(speed, steer), as neoracer_env.py gives them."""
@@ -402,7 +397,8 @@ def ppo_update(
 
 # --- Effects: environments, rollouts, logging, files -----------------------
 
-type Outcome = TerminationReason | Literal["truncated"]
+type Outcome = str
+"""How an episode ended: an end of the env's terminate, or truncated."""
 
 
 @dataclass(frozen=True)
@@ -424,7 +420,7 @@ def ended(
         int(i): EpisodeResult(
             float(returns[i]),
             float(out.lap_frac[i]),
-            REASONS[out.reason[i] - 1] if out.reason[i] else "truncated",
+            out.ends[out.reason[i] - 1] if out.reason[i] else "truncated",
             int(steps[i]),
         )
         for i in np.flatnonzero(out.done)

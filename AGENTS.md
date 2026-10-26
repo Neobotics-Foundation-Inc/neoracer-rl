@@ -165,8 +165,9 @@ def reward(term: RewardTerm, step: StepInfo) -> float:
 - Data can be compared, printed, saved in a config file, hashed and tested. A lambda cannot.
 - A new behavior is a new case. The type checker then shows each place to update.
 - Use a callable argument only when the set of behaviors is open,
-  for example a policy that a user gives to a rollout function.
+  for example a policy that a user gives to a rollout function, or a task's reward (`task.Reward`).
   Then give it a type: `Callable[[Observation], Action]` or a `Protocol`.
+  Our own values of it are still data: a frozen dataclass with `__call__`, as `task.ProgressReward` is.
 
 ## 6. Pure core, effects at the edge
 

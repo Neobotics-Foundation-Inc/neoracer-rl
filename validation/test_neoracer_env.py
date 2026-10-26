@@ -3,17 +3,15 @@ Tests for neoracer_rl.envs.NeoRacerEnv: the Gymnasium environment
 interface. These tests do not train a policy. validation/test_train_ppo.py
 tests the PPO baseline.
 
-Random actions rarely complete a lap or roll the car over. So the tests
-call the pure progress and termination functions directly, with laws over
-many random inputs. Two env tests then check that step() uses them.
+Random actions rarely complete a lap or roll the car over. So
+validation/test_task.py states the laws of the task's functions over many
+inputs, and the env tests here check that step() uses them.
 """
 
 import os
 import pickle
 import re
-from collections.abc import Mapping
 from dataclasses import replace
-from types import MappingProxyType
 
 import mujoco
 import numpy as np
@@ -28,19 +26,7 @@ from neoracer_mujoco.track_generation import Track
 from neoracer_mujoco.track_generation.mjcf import to_start_frame
 from neoracer_spec.neoracer import NEORACER
 
-from neoracer_rl.envs import (
-    GeneratedTracks,
-    NeoRacerEnv,
-    NeoRacerEnvConfig,
-    RewardConfig,
-    TerminationConfig,
-    TerminationReason,
-    advance,
-    is_stuck,
-    reward,
-    start_progress,
-    termination,
-)
+from neoracer_rl.envs import GeneratedTracks, LapEnds, NeoRacerEnv, NeoRacerEnvConfig
 from neoracer_rl.envs.neoracer_env import arenas, lap_angle
 
 LAP = 2.0 * np.pi
@@ -228,111 +214,10 @@ def test_repeated_random_actions_produce_no_nans(env):
             env.reset(seed=0)
 
 
-# --- progress, termination and reward: pure functions -------------------------
+# --- the reward in the env ------------------------------------------------------
 
 
-def _wrap(angle: float) -> float:
-    """angle (rad) in [-pi, pi), the range of the env's angle around the center."""
-    return float(np.remainder(angle + np.pi, 2.0 * np.pi) - np.pi)
-
-
-def test_advance_gives_a_step_in_minus_pi_to_pi():
-    """For any two angles, advance gives a delta in [-pi, pi). The delta
-    differs from the plain difference only by a full turn."""
-    rng = np.random.default_rng(0)
-    for old, new in rng.uniform(-np.pi, np.pi, (2000, 2)):
-        p = advance(start_progress(old), new, window_len=5)
-        assert -np.pi <= p.delta < np.pi
-        turns = (p.delta - (new - old)) / LAP
-        assert turns == pytest.approx(round(turns), abs=1e-9)
-        assert p.total == p.delta and p.angle == new
-
-
-def test_a_step_of_half_a_lap_either_way_is_minus_pi():
-    """The delta lies in [-pi, pi), so half a lap forward or back is -pi."""
-    half = np.pi / 2
-    for old, new in [(0.0, np.pi), (np.pi, 0.0), (-half, half), (half, -half)]:
-        with case((old, new)):
-            assert advance(start_progress(old), new, window_len=5).delta == -np.pi
-
-
-def test_advance_adds_up_the_true_progress():
-    """If the car moves less than half a turn per step, the total of
-    advance is the true change of angle, although each angle wraps."""
-    rng = np.random.default_rng(1)
-    window_len = 7
-    for _ in range(50):
-        steps = rng.uniform(-0.9 * np.pi, 0.9 * np.pi, 40)  # rad per step
-        start = float(rng.uniform(-np.pi, np.pi))
-        p = start_progress(start)
-        for true_angle in start + np.cumsum(steps):
-            p = advance(p, _wrap(true_angle), window_len)
-            assert len(p.window) <= window_len
-            assert p.window[-1] == p.total
-        assert p.total == pytest.approx(float(steps.sum()), abs=1e-9)
-
-
-def test_is_stuck_only_with_a_full_window_and_little_progress():
-    """is_stuck is False until the window has window_len totals. Then it is
-    True if and only if the progress over the window is below min_progress."""
-    rng = np.random.default_rng(2)
-    window_len, min_progress = 6, 0.05
-    for _ in range(200):
-        p = start_progress(0.0)
-        scale = rng.choice([0.001, 0.01, 0.1])  # rad per step
-        for step, angle in enumerate(np.cumsum(rng.normal(0.0, scale, 15))):
-            p = advance(p, _wrap(angle), window_len)
-            full = step + 2 >= window_len  # start_progress puts one total in
-            progress = abs(p.total - p.window[0])
-            expected = full and progress < min_progress
-            assert is_stuck(p, window_len, min_progress) == expected
-
-
-def test_termination_reason_follows_the_priority():
-    """Rollover comes first, then a crash, then stuck, then a lap. A lap is
-    complete if and only if the total progress is at least +2 pi. Progress
-    in the negative direction never completes a lap."""
-    cfg = TerminationConfig()
-    rng = np.random.default_rng(3)
-    totals = [*rng.uniform(-2.0 * LAP, 2.0 * LAP, 500), LAP, -LAP, 0.0]
-    for total in totals:
-        for upright_cos in (-1.0, cfg.upright_rollover_cos - 1e-9, 0.9, 1.0):
-            for contact in (False, True):
-                for stuck in (False, True):
-                    reason = termination(cfg, upright_cos, contact, stuck, total)
-                    if upright_cos < cfg.upright_rollover_cos:
-                        assert reason == "rollover"
-                    elif contact:
-                        assert reason == "crash"
-                    elif stuck:
-                        assert reason == "stuck"
-                    elif total >= LAP:
-                        assert reason == "lap_complete"
-                    else:
-                        assert reason is None
-
-
-def test_reward_adds_the_terminal_term():
-    """Without a termination, the reward is progress_weight * delta. A
-    termination adds lap_bonus or subtracts its penalty."""
-    cfg = RewardConfig()
-    terminal: Mapping[TerminationReason, float] = MappingProxyType(
-        {
-            "lap_complete": cfg.lap_bonus,
-            "rollover": -cfg.rollover_penalty,
-            "crash": -cfg.crash_penalty,
-            "stuck": -cfg.stuck_penalty,
-        }
-    )
-    rng = np.random.default_rng(4)
-    for delta in rng.uniform(-np.pi, np.pi, 200):
-        base = reward(cfg, delta, None)
-        assert base == pytest.approx(cfg.progress_weight * delta)
-        for reason, term in terminal.items():
-            assert reward(cfg, delta, reason) == pytest.approx(base + term)
-
-
-def _episode_return(speed: float, seed: int) -> tuple[float, TerminationReason | None]:
+def _episode_return(speed: float, seed: int) -> tuple[float, str | None]:
     """The return and the end of an episode with a constant action: the
     speed, and no steering."""
     env = NeoRacerEnv()
@@ -379,10 +264,7 @@ def test_rollover_terminates(env):
         0.0,
     ]
     mujoco.mj_forward(env.model, env.data)
-    assert (
-        sim.car_upright_cos(env.data, env.scene.car)
-        < env.config.termination.upright_rollover_cos
-    )
+    assert sim.car_upright_cos(env.data, env.scene.car) < LapEnds().upright_rollover_cos
 
     _obs, reward, terminated, truncated, info = env.step(
         np.array([0.0, 0.0], dtype=np.float32)
@@ -395,10 +277,10 @@ def test_rollover_terminates(env):
 
 def test_stuck_terminates(env):
     """With zero speed, the car makes no progress. So the stuck check
-    ends the episode after stuck_window_s."""
+    ends the episode after progress_window_s."""
     env.reset(seed=0)
     cfg = env.config
-    window_steps = round(cfg.termination.stuck_window_s * cfg.control_hz)
+    window_steps = round(cfg.progress_window_s * cfg.control_hz)
     reason = None
     for _ in range(window_steps + 20):
         _obs, _reward, terminated, truncated, info = env.step(
@@ -500,7 +382,7 @@ def test_a_pool_gives_episodes_on_several_tracks():
         obs, _info = env.reset(seed=seed)
         assert env.observation_space.contains(obs)
         seen.add(id(env.scene))
-        angle = env._progress.angle
+        angle = env._progress.angle[0]
         assert min(angle, 2.0 * np.pi - angle) < 0.1  # rad, at the start
     assert len(seen) == 3
     env.close()

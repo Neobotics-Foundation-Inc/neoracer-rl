@@ -45,10 +45,11 @@ from neoracer_rl.envs import (
     GeneratedTracks,
     LoopCorridor,
     NeoRacerEnvConfig,
-    RewardConfig,
+    ProgressReward,
 )
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
-from neoracer_rl.envs.neoracer_env import OBS_DIM, Tracks
+from neoracer_rl.envs.neoracer_env import Tracks
+from neoracer_rl.envs.task import OBS_DIM
 
 
 def _reward_to_go(rewards: np.ndarray, dones: np.ndarray) -> np.ndarray:
@@ -230,7 +231,7 @@ def test_truncation_bootstraps_from_the_last_observation_of_the_episode():
     episode, not of the first one of the next, and GAE stops there."""
     nsteps, episode, speed = 6, 3, OBS_DIM - 1  # speed: observation index
     params = PPOParams(rollout_steps=nsteps, minibatches=1, hidden=(), obs_clip=1e9)
-    reward_free = RewardConfig(progress_weight=0.0)
+    reward_free = ProgressReward(progress_weight=0.0)
     config = NeoRacerEnvConfig(max_episode_steps=episode, reward=reward_free)
     env = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
     pick = np.zeros((OBS_DIM, 1))

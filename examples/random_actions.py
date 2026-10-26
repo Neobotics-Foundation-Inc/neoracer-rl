@@ -13,14 +13,14 @@ Usage:
 """
 
 from dataclasses import dataclass
-from typing import Literal
 
 import numpy as np
 
 from neoracer_rl.envs import NeoRacerEnv
-from neoracer_rl.envs.neoracer_env import TerminationReason
 
-type Outcome = TerminationReason | Literal["truncated", "max_steps"]
+type Outcome = str
+"""How an episode ended: an end of the env's terminate, truncated, or
+max_steps."""
 
 
 @dataclass(frozen=True)

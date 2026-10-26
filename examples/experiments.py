@@ -7,7 +7,8 @@ tables. Run it from the repository root on a 4-core machine:
 runs/ gets each policy and the log of its training (runs/l1.npz, runs/l1.log)
 and the evaluations (runs/evaluations.json). A step whose output is there
 does not run again, so a stopped run goes on where it stopped; delete a file
-to run its step again. On a 4-core 2.1 GHz Xeon the training takes about 1.5
+to run its step again. A run that trains again drops the evaluations, which
+then run again too. On a 4-core 2.1 GHz Xeon the training takes about 1.5
 hours and the evaluations about 40 minutes.
 
 A run is named by its regimen and its seed: l for loop_corridor, d for
@@ -59,6 +60,8 @@ LAST_STEPS = 50_000
 CORES = 4
 """The cores that the runs share: seed 0 trains on all of them, the others
 on one each, as many at a time."""
+EVALUATIONS = "evaluations.json"
+"""The file, next to the runs, that holds every job's evaluation."""
 
 
 @dataclass(frozen=True)
@@ -139,6 +142,7 @@ def train(out: Path, run: Run) -> None:
     if log_path.exists() and (out / f"{run.name}.npz").exists():
         return
     log_path.unlink(missing_ok=True)
+    (out / EVALUATIONS).unlink(missing_ok=True)
     command = [
         sys.executable,
         *("-m", "examples.train_ppo"),
@@ -210,13 +214,13 @@ def run_job(job: tuple[Path, Job]) -> tuple[str, dict[str, Any]]:
 
 
 def evaluate_all(out: Path) -> dict[str, dict[str, Any]]:
-    """Every job's evaluation, from out/evaluations.json once it is there. The
-    file appears only once it is whole."""
-    path = out / "evaluations.json"
+    """Every job's evaluation, from out/EVALUATIONS once it is there. The file
+    appears only once it is whole."""
+    path = out / EVALUATIONS
     if not path.exists():
         with Pool(CORES) as pool:
             results = dict(pool.imap_unordered(run_job, [(out, j) for j in jobs()]))
-        part = out / "evaluations.json.part"
+        part = out / f"{EVALUATIONS}.part"
         part.write_text(json.dumps(results, indent=1, sort_keys=True))
         part.replace(path)
     return json.loads(path.read_text())

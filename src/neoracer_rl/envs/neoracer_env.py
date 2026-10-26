@@ -2,8 +2,8 @@
 Gymnasium environment for the NeoRacer MuJoCo car.
 
 This module gives the NeoRacer simulator the Gymnasium Env API. It uses the
-neoracer_mujoco modules (assets, sim, sensors, collision, contract) and adds
-no physics, sensors or actuator mappings. The classical controllers in
+neoracer_mujoco modules (assets, batch, sim, sensors, contract, speed_loop)
+and adds no physics, sensors or actuator mappings. The classical controllers in
 neoracer_mujoco.control drive the same simulator.
 
 Frame: +X forward, +Y left, +Z up (see neoracer-mujoco's assets/neoracer.xml).
@@ -49,11 +49,10 @@ Observation space -- Box(20,), float32, built only from sensors.SensorReadings
 
 Control rate: 30 Hz, the target LiDAR scan rate of the real hardware.
 __init__ computes the physics steps per action from model.opt.timestep.
-Each step, and each tick of the speed loop, starts MuJoCo's constraint
-solver cold (qacc_warmstart = 0), as mujoco.rollout does at the start of each
-piece of batch.drive, so a row of NeoRacerBatch on the CPU backend steps the
-same as this env, bit for bit. reset() starts the speed loop over, its ticks
-from then on.
+step() drives the car with neoracer_mujoco's batch.drive, as NeoRacerBatch
+does, on a batch.DataBatch of the env's MjData, so a row of NeoRacerBatch on
+the CPU backend steps the same as this env, bit for bit. reset() starts the
+speed loop over, its ticks from then on.
 
 Reward (RewardConfig, all weights explicit and UNTUNED, see reward):
     r_t = progress_weight * delta_theta_t
@@ -97,14 +96,12 @@ from gymnasium import spaces
 from neoracer_mujoco import (
     assets,
     batch,
-    collision,
     contract,
     physics,
     sensors,
     sim,
     speed_loop,
 )
-from neoracer_mujoco.control.steering import ControlCommand
 from neoracer_mujoco.physics import PhysicsRanges
 from neoracer_mujoco.racecar import CarParams, neoracer_params
 from neoracer_mujoco.scene import Car, Scene
@@ -529,8 +526,8 @@ class NeoRacerEnv(gym.Env):
 
         self._limits = contract.actuator_limits(self.model, self._car)
         self.loop: speed_loop.SpeedLoopState | None = None
-        """The car's speed loop (config.car.speed_loop) in the episode.
-        reset() starts it over."""
+        """The car's speed loop (config.car.speed_loop) in the episode, a
+        batch of one row. reset() starts it over."""
 
         self.action_space = spaces.Box(
             low=_ACTION_LOW, high=_ACTION_HIGH, dtype=np.float32
@@ -560,30 +557,21 @@ class NeoRacerEnv(gym.Env):
         """Step one control period with speed (action[0]) and steer (rad)
         commanded, the car's speed loop, if it has one, holding the speed.
         Return whether a car geom touched a wall."""
-        params, dt = self.config.car.speed_loop, float(self.model.opt.timestep)
-        if params is None or self.loop is None:
-            commanded, throttle = 0.0, speed * self.config.max_speed
+        model, car, n = self.model, self._car, self._substeps_per_action
+        one, steers = batch.DataBatch(model), np.array([steer])
+        params, loop = self.config.car.speed_loop, self.loop
+        if params is None or loop is None:
+            throttle = np.array([speed * self.config.max_speed])
+            ctrl = batch.command(model, car, throttle, steers)
+            _, sensordata = one.step(self.data, ctrl, n)
         else:
-            commanded = float(speed_loop.target(params, speed, self.config.max_speed))
-            throttle = float(self.loop.throttle)
-        contact, fresh = False, True
-        for _ in range(self._substeps_per_action):
-            if fresh:
-                self.data.qacc_warmstart[:] = 0
-                command = ControlCommand(throttle=throttle, steer=steer)
-                sim.apply_command(self._car, self.data, command)
-            mujoco.mj_step(self.model, self.data)
-            if collision.car_touches_wall(self.data, self._car):
-                contact = True
-            fresh = False
-            if params is not None and self.loop is not None:
-                angle = self._drive_angle()
-                self.loop = speed_loop.step(params, self.loop, commanded, angle, dt)
-                fresh, throttle = (
-                    self.loop.measure.span == 0.0,
-                    float(self.loop.throttle),
-                )
-        return contact
+            commanded = np.asarray(
+                speed_loop.target(params, np.array([speed]), self.config.max_speed)
+            )
+            _, sensordata, self.loop = batch.drive(
+                one, model, car, params, self.data, loop, commanded, steers, n
+            )
+        return bool((batch.read(model, sensordata, car.truth.wall_contact) > 0).any())
 
     def _build_observation(self) -> tuple[Observation, float]:
         """The observation, and the estimated speed (m/s) in it."""
@@ -626,7 +614,7 @@ class NeoRacerEnv(gym.Env):
         physics.apply_physics(self.model, self.scene, self.physics)
         params = self.config.car.speed_loop
         if params is not None:
-            self.loop = speed_loop.start(params, self._drive_angle())
+            self.loop = speed_loop.start(params, np.array([self._drive_angle()]))
 
         self._step_count = 0
         self._progress = start_progress(self._lap_angle())

@@ -116,7 +116,7 @@ class StepResult:
     obs: Observations
     """The observation after the step."""
     reward: Rows
-    reason: npt.NDArray[np.int8]
+    reason: Ints
     """The end of each row's episode: 0 while it goes on, else k + 1 for
     ends[k]."""
     ends: tuple[str, ...]

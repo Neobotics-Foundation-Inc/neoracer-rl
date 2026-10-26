@@ -198,8 +198,7 @@ class RacecarCore:
 
     params: SensingParams
 
-    @property
-    def obs_dim(self) -> int:
+    def obs_dim(self, env_obs_dim: int) -> int:
         return policy.OBS_DIM
 
     def start(self, obs: EnvObservations, rng: np.random.Generator) -> Sensing:

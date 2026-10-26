@@ -150,12 +150,12 @@ type Terminate = Callable[[Step], Ends]
 type Reward = Callable[[Step, Ends], Rows]
 
 
-def first_end(ends: Ends, rows: int) -> tuple[npt.NDArray[np.int8], Ends]:
+def first_end(ends: Ends, rows: int) -> tuple[Ints, Ends]:
     """Each row's end, as a code, 0 while its episode goes on, else k + 1 for
     the k-th of ends, the first it meets; and ends with only those."""
-    codes = np.zeros(rows, np.int8)
+    codes = np.zeros(rows, np.int64)
     for k, ended in enumerate(ends.values(), 1):
-        codes = np.where((codes == 0) & ended, k, codes).astype(np.int8)
+        codes = np.where((codes == 0) & ended, k, codes)
     return codes, {name: codes == k for k, name in enumerate(ends, 1)}
 
 

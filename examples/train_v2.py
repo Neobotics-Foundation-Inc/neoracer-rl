@@ -31,7 +31,7 @@ import numpy as np
 import numpy.typing as npt
 from neoracer_mujoco import assets
 from neoracer_mujoco.physics import PhysicsRanges, Range
-from neoracer_mujoco.racecar_core_adapter import racecar_neo_v2_params
+from neoracer_mujoco.racecar import racecar_neo_v2_params
 
 from examples.racecar_neo_v2 import policy
 from examples.train_ppo import (

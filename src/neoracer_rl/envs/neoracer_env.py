@@ -106,7 +106,7 @@ from neoracer_mujoco import (
 )
 from neoracer_mujoco.control.steering import ControlCommand
 from neoracer_mujoco.physics import PhysicsRanges
-from neoracer_mujoco.racecar_core_adapter import CarParams, neoracer_params
+from neoracer_mujoco.racecar import CarParams, neoracer_params
 from neoracer_mujoco.scene import Car, Scene
 from neoracer_mujoco.sim import SpawnRange
 from neoracer_mujoco.track_generation import (

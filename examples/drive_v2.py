@@ -28,7 +28,8 @@ from typing import Any, assert_never, get_args
 import mujoco
 import numpy as np
 from neoracer_mujoco import collision, sim
-from neoracer_mujoco.racecar_core_adapter import MujocoRacecar, racecar_neo_v2_params
+from neoracer_mujoco.racecar import racecar_neo_v2_params
+from neoracer_mujoco.racecar_core_adapter import MujocoRacecar
 from neoracer_mujoco.track_generation import shortest_loop_distance
 
 from examples.racecar_neo_v2 import policy

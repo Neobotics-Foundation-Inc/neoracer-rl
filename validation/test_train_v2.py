@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from neoracer_mujoco.racecar_core_adapter import racecar_neo_v2_params
+from neoracer_mujoco.racecar import racecar_neo_v2_params
 
 from examples.racecar_neo_v2 import policy
 from examples.train_ppo import (

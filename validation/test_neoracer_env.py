@@ -23,7 +23,7 @@ from gymnasium import spaces
 from gymnasium.utils.env_checker import check_env
 from neoracer_mujoco import assets, export, sim
 from neoracer_mujoco.physics import PhysicsRanges, Range
-from neoracer_mujoco.racecar_core_adapter import neoracer_params
+from neoracer_mujoco.racecar import neoracer_params
 from neoracer_mujoco.track_generation import Track
 from neoracer_mujoco.track_generation.mjcf import to_start_frame
 from neoracer_spec.neoracer import NEORACER

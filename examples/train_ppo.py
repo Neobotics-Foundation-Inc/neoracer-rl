@@ -642,7 +642,9 @@ _LOG_LINE = re.compile(
 
 
 def parse_log(line: str) -> LogLine | None:
-    """The numbers that format_log wrote in line, or None for any other line."""
+    """The numbers that format_log wrote in line, or None for a line that does
+    not begin as format_log's lines do. The fields after the laps are not
+    read."""
     match = _LOG_LINE.match(line)
     if match is None:
         return None

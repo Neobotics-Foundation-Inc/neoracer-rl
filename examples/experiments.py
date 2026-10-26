@@ -132,11 +132,13 @@ def runs() -> tuple[list[Run], list[Run]]:
 
 def train(out: Path, run: Run) -> None:
     """Train run with train_ppo, its output in out/<name>.log, the time it
-    took on the log's last line. The log appears only once it is whole, and a
-    run with its log and its policy is not trained again."""
+    took on the log's last line. The log goes when training starts and comes
+    back only once it is done, so a run with its log and its policy is not
+    trained again."""
     log_path = out / f"{run.name}.log"
     if log_path.exists() and (out / f"{run.name}.npz").exists():
         return
+    log_path.unlink(missing_ok=True)
     command = [
         sys.executable,
         *("-m", "examples.train_ppo"),

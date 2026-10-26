@@ -140,7 +140,7 @@ python -m examples.train_ppo --eval ppo.npz --episodes 20
 - `src/neoracer_rl/envs/neoracer_env.py` has `NeoRacerEnv` and the functions that define the task: the observation, progress, termination and reward.
 - `src/neoracer_rl/envs/neoracer_batch.py` has `NeoRacerBatch` and the array versions of those functions.
 - A new part of the task, such as another reward term, goes in `neoracer_env.py` as a function that both the env and the batch can use. Physics and sensors belong in neoracer-mujoco.
-- `examples/` has `train_ppo.py`; `random_actions.py`, which checks that the environment works; and the RACECAR Neo V2's policy: `train_v2.py`, `drive_v2.py` and `racecar_neo_v2/`.
+- `examples/` has `train_ppo.py`; `experiments.py`, which trains and evaluates every run of EXPERIMENTS.md and prints its tables; `random_actions.py`, which checks that the environment works; and the RACECAR Neo V2's policy: `train_v2.py`, `drive_v2.py` and `racecar_neo_v2/`.
 - `validation/` has the tests, and `users/<github-name>/` personal experiments.
 
 ## Setup

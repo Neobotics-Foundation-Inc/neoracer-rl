@@ -1,8 +1,8 @@
 """
 Laws for neoracer_rl.envs.neoracer_batch: each row of NeoRacerBatch is a
-NeoRacerEnv episode. The pure row functions agree with the scalar ones of
-neoracer_env.py on random inputs, and a row on the Cpu backend steps like
-NeoRacerEnv, bit for bit.
+NeoRacerEnv episode, and a row on the Cpu backend steps like NeoRacerEnv,
+bit for bit. validation/test_task.py has the laws of the task's functions,
+which both use.
 """
 
 from dataclasses import replace
@@ -12,92 +12,14 @@ import pytest
 from cases import case
 from neoracer_mujoco.physics import Physics, PhysicsRanges, Range
 
-from neoracer_rl.envs import (
-    GeneratedTracks,
-    NeoRacerEnv,
-    NeoRacerEnvConfig,
-    TerminationReason,
-    advance,
-    is_stuck,
-    reward,
-    start_progress,
-    termination,
-)
-from neoracer_rl.envs.neoracer_batch import (
-    REASONS,
-    Cpu,
-    NeoRacerBatch,
-    Warp,
-    advance_rows,
-    restart_rows,
-    rewards,
-    start_rows,
-    stuck_rows,
-    termination_codes,
-)
+from neoracer_rl.envs import GeneratedTracks, NeoRacerEnv, NeoRacerEnvConfig
+from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch, StepResult, Warp
 
 
-def _reason(code: int | np.integer) -> TerminationReason | None:
-    """The episode end that a code of REASONS stands for."""
-    return REASONS[int(code) - 1] if code else None
-
-
-def test_a_row_step_of_half_a_lap_either_way_is_minus_pi():
-    """As in advance, half a lap forward or back is -pi in every row."""
-    half = np.pi / 2
-    old = np.array([0.0, np.pi, -half, half])
-    rows = advance_rows(start_rows(old, 5), np.array([np.pi, 0.0, half, -half]))
-    np.testing.assert_array_equal(rows.delta, -np.pi)
-
-
-def test_progress_rows_follow_advance_and_is_stuck():
-    """Each row of advance_rows and stuck_rows is advance and is_stuck on
-    that row's angles, including a row that starts over halfway."""
-    rng = np.random.default_rng(0)
-    nrows, window_len, min_progress = 5, 6, 0.05
-    start = rng.uniform(-np.pi, np.pi, nrows)
-    rows = start_rows(start, window_len)
-    scalar = [start_progress(a) for a in start]
-    for step in range(40):
-        scale = rng.choice([0.001, 0.01, 1.0], nrows)  # rad per step
-        angle = np.angle(np.exp(1j * (rows.angle + rng.normal(0.0, scale))))
-        rows = advance_rows(rows, angle)
-        stuck = stuck_rows(rows, min_progress)
-        for i in range(nrows):
-            scalar[i] = advance(scalar[i], float(angle[i]), window_len)
-            assert rows.total[i] == scalar[i].total
-            assert rows.delta[i] == scalar[i].delta
-            assert stuck[i] == is_stuck(scalar[i], window_len, min_progress)
-        if step == 20:
-            done = np.arange(nrows) % 2 == 0
-            rows = restart_rows(rows, done, start)
-            for i in np.flatnonzero(done):
-                scalar[i] = start_progress(float(start[i]))
-
-
-def test_termination_codes_follow_termination():
-    cfg = NeoRacerEnvConfig()
-    rng = np.random.default_rng(1)
-    n = 2000
-    upright_cos = rng.choice([-1.0, 0.49, 0.5, 1.0], n)
-    contact, stuck = rng.random(n) < 0.3, rng.random(n) < 0.3
-    total = rng.uniform(-2.0, 2.0, n) * 2.0 * np.pi
-    codes = termination_codes(cfg, upright_cos, contact, stuck, total)
-    for i in range(n):
-        expected = termination(
-            cfg.termination, upright_cos[i], contact[i], stuck[i], total[i]
-        )
-        assert _reason(codes[i]) == expected
-
-
-def test_rewards_follow_reward():
-    cfg = NeoRacerEnvConfig()
-    rng = np.random.default_rng(2)
-    delta = rng.uniform(-np.pi, np.pi, 500)
-    codes = rng.integers(0, len(REASONS) + 1, 500).astype(np.int8)
-    batch_rewards = rewards(cfg, delta, codes).tolist()
-    for d, c, r in zip(delta.tolist(), codes.tolist(), batch_rewards, strict=True):
-        assert r == reward(cfg.reward, d, _reason(c))
+def _reason(out: StepResult, row: int) -> str | None:
+    """The end of row's episode in out, or None while it goes on."""
+    code = int(out.reason[row])
+    return out.ends[code - 1] if code else None
 
 
 RANDOM_PHYSICS = PhysicsRanges(
@@ -144,7 +66,7 @@ def _steps_like_neoracer_env(config: NeoRacerEnvConfig) -> None:
             obs, r, terminated, truncated, info = env.step(action[i])
             np.testing.assert_array_equal(out.obs[i], obs)
             assert out.reward[i] == r
-            assert _reason(out.reason[i]) == info["termination_reason"]
+            assert _reason(out, i) == info["termination_reason"]
             assert out.truncated[i] == truncated
             ended |= terminated or truncated
     sim_batch.close()
@@ -163,7 +85,7 @@ def test_a_row_whose_episode_ends_starts_over_from_its_spawn():
     while not out.done[0]:
         state, out = sim_batch.step(state, action)
     sim_batch.close()
-    assert _reason(out.reason[0]) == "crash" and not out.done[1]
+    assert _reason(out, 0) == "crash" and not out.done[1]
     np.testing.assert_array_equal(state.obs[0], start.obs[0])
     assert state.progress.steps[0] == 0 and state.progress.total[0] == 0.0
     assert state.progress.steps[1] > 0

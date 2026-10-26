@@ -56,7 +56,6 @@ from neoracer_rl.envs import (
     NeoRacerEnvConfig,
 )
 from neoracer_rl.envs.neoracer_batch import (
-    REASONS,
     Backend,
     BatchState,
     Cpu,
@@ -64,12 +63,8 @@ from neoracer_rl.envs.neoracer_batch import (
     StepResult,
     Warp,
 )
-from neoracer_rl.envs.neoracer_env import (
-    OBS_DIM,
-    EnvInfo,
-    TerminationReason,
-    Tracks,
-)
+from neoracer_rl.envs.neoracer_env import EnvInfo, Tracks
+from neoracer_rl.envs.task import OBS_DIM
 
 ACTION_DIM = 2
 """(speed, steer), as neoracer_env.py gives them."""
@@ -402,7 +397,8 @@ def ppo_update(
 
 # --- Effects: environments, rollouts, logging, files -----------------------
 
-type Outcome = TerminationReason | Literal["truncated"]
+type Outcome = str
+"""How an episode ended: an end of the env's terminate, or truncated."""
 
 
 @dataclass(frozen=True)
@@ -424,7 +420,7 @@ def ended(
         int(i): EpisodeResult(
             float(returns[i]),
             float(out.lap_frac[i]),
-            REASONS[out.reason[i] - 1] if out.reason[i] else "truncated",
+            out.ends[out.reason[i] - 1] if out.reason[i] else "truncated",
             int(steps[i]),
         )
         for i in np.flatnonzero(out.done)
@@ -444,9 +440,9 @@ class Interface[S](Protocol):
     the envs' observations, and the actions that reach the envs. S is what
     it carries from one step to the next; rng draws its randomness."""
 
-    @property
-    def obs_dim(self) -> int:
-        """The size of an observation that the policy sees."""
+    def obs_dim(self, env_obs_dim: int) -> int:
+        """The size of an observation that the policy sees, of envs whose
+        observations have env_obs_dim numbers."""
         ...
 
     def start(self, obs: EnvObsBatch, rng: np.random.Generator) -> S:
@@ -471,9 +467,8 @@ class Interface[S](Protocol):
 class Exact:
     """The policy sees the envs' observations, and its actions reach the envs."""
 
-    @property
-    def obs_dim(self) -> int:
-        return OBS_DIM
+    def obs_dim(self, env_obs_dim: int) -> int:
+        return env_obs_dim
 
     def start(self, obs: EnvObsBatch, rng: np.random.Generator) -> None:
         return None
@@ -530,7 +525,8 @@ def collect_rollout[S](
     On truncation, the reward of the last step gets gamma * V(final observation),
     so that the time limit does not look like a terminal state to GAE.
     """
-    t_len, n, obs_dim = params.rollout_steps, env.nbatch, interface.obs_dim
+    t_len, n = params.rollout_steps, env.nbatch
+    obs_dim = interface.obs_dim(state.env.obs.shape[1])
     obs_buf = np.zeros((t_len, n, obs_dim), dtype=np.float32)
     act_buf = np.zeros((t_len, n, ACTION_DIM), dtype=np.float32)
     logp_buf = np.zeros((t_len, n), dtype=np.float32)
@@ -669,16 +665,17 @@ def train[S](
     default_rng(seed); each update draws new spawns and physics."""
     key = jax.random.key(seed)
     key, init_key = jax.random.split(key)
-    net = init_actor_critic(init_key, params, interface.obs_dim)
-    opt_state = init_opt_state(net, params)
     env = NeoRacerBatch(backend, num_envs, config)
     rng = np.random.default_rng(seed)
     env_state = env.reset(rng)
+    obs_dim = interface.obs_dim(env_state.obs.shape[1])
+    net = init_actor_critic(init_key, params, obs_dim)
+    opt_state = init_opt_state(net, params)
     state = RolloutState(
         env=env_state,
         episode_return=np.zeros(num_envs),
         episode_steps=np.zeros(num_envs, dtype=np.int64),
-        stats=empty_obs_stats(interface.obs_dim),
+        stats=empty_obs_stats(obs_dim),
         carry=interface.start(env_state.obs, rng),
     )
     steps_per_update = params.rollout_steps * num_envs

@@ -39,16 +39,20 @@ from examples.train_ppo import (
     ppo_loss,
     ppo_update,
     save_policy,
+    train,
     update_obs_stats,
 )
 from neoracer_rl.envs import (
     GeneratedTracks,
     LoopCorridor,
     NeoRacerEnvConfig,
-    RewardConfig,
+    ProgressReward,
+    Step,
+    encoder_speed,
 )
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
-from neoracer_rl.envs.neoracer_env import OBS_DIM, Tracks
+from neoracer_rl.envs.neoracer_env import Tracks
+from neoracer_rl.envs.task import OBS_DIM, Observations
 
 
 def _reward_to_go(rewards: np.ndarray, dones: np.ndarray) -> np.ndarray:
@@ -223,6 +227,22 @@ def test_short_training_run_changes_the_params_and_keeps_them_finite(tmp_path):
     np.testing.assert_array_equal(stats.mean, state.stats.mean)
 
 
+def _three_numbers(step: Step) -> Observations:
+    """The progress so far, the step's progress, and the encoder's speed."""
+    parts = (step.progress.total, step.progress.delta, encoder_speed(step))
+    return np.stack(parts, axis=-1).astype(np.float32)
+
+
+def test_training_takes_the_size_of_the_env_observation():
+    """A config whose observe gives 3 numbers trains a policy over 3 inputs,
+    with statistics of 3."""
+    params = PPOParams(rollout_steps=16, minibatches=1, hidden=(8,))
+    config = NeoRacerEnvConfig(observe=_three_numbers)
+    net, stats = train(params, 32, 0, 2, Cpu(nthread=0), config, Exact())
+    assert net.actor[0].weight.shape[0] == net.critic[0].weight.shape[0] == 3
+    assert stats.mean.shape == (3,) and stats.count == 32
+
+
 def test_truncation_bootstraps_from_the_last_observation_of_the_episode():
     """The env gives no reward here, and the critic returns the speed in the
     observation. An episode truncated after step t then gets the target
@@ -230,7 +250,7 @@ def test_truncation_bootstraps_from_the_last_observation_of_the_episode():
     episode, not of the first one of the next, and GAE stops there."""
     nsteps, episode, speed = 6, 3, OBS_DIM - 1  # speed: observation index
     params = PPOParams(rollout_steps=nsteps, minibatches=1, hidden=(), obs_clip=1e9)
-    reward_free = RewardConfig(progress_weight=0.0)
+    reward_free = ProgressReward(progress_weight=0.0)
     config = NeoRacerEnvConfig(max_episode_steps=episode, reward=reward_free)
     env = NeoRacerBatch(Cpu(nthread=0), nbatch=2, config=config)
     pick = np.zeros((OBS_DIM, 1))

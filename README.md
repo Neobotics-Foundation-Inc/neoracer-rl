@@ -55,21 +55,34 @@ Progress is how far around the track the car has gone, as an angle, so one lap i
 
 If none of them happens, the episode is truncated after 60 s. A crash and getting stuck cost the same, so a car that tries the first corner and hits the wall still earns more than one that never moves. Nobody has tuned these weights yet.
 
-The reward is a plain function of the step's progress and the reason the episode ended, if it did:
+These are the defaults of the three functions that make the task, in `task.py`. Each takes a `Step`, what the env knows after a step: every sensor reading, the car's own and the ones that only a simulator has, whether the car touched a wall, its progress around the track, and the action.
+
+| Function | Default | Returns |
+|---|---|---|
+| `observe(step)` | `CarObservation()` | the observation |
+| `terminate(step)` | `LapEnds()` | the ends, by name, each true where the episode ends that way |
+| `reward(step, ends)` | `ProgressReward()` | the reward |
+
+An episode that meets several ends in one step has the first, in the order that `terminate` gives them, and `reward` sees only that one. The defaults are dataclasses, so their settings print, compare and save with the config: `ProgressReward(crash_penalty=3.0)`. To change the task, pass your own functions:
 
 ```python
-from neoracer_rl.envs import RewardConfig, reward
+import numpy as np
+from neoracer_rl.envs import NeoRacerEnv, NeoRacerEnvConfig, ProgressReward
 
-reward(RewardConfig(), 0.1, None)  # 0.1
-reward(RewardConfig(), 0.1, "lap_complete")  # 10.1
-reward(RewardConfig(), 0.0, "crash")  # -5.0
+
+def reward(step, ends):
+    """The lap task's reward, less a cost for steering hard."""
+    return ProgressReward()(step, ends) - 0.01 * np.abs(step.action[:, 1])
+
+
+env = NeoRacerEnv(NeoRacerEnvConfig(reward=reward))
 ```
 
-The reason is a `Literal["rollover", "crash", "stuck", "lap_complete"]`, so the type checker sees every case. Progress and termination are plain functions too: `advance` returns the next `Progress` from the last one and the car's new angle, and `termination` returns the reason or `None`.
+The functions work on rows: a `Step` holds one row in `NeoRacerEnv` and one per episode in `NeoRacerBatch` (below), so the same function serves both. `step.read(sensor)` gives a sensor's reading in every row, for example `step.read(step.car.truth.pos)` for the car's true position.
 
 ## Changing the task
 
-`NeoRacerEnvConfig` holds the whole task: the track, the rewards, the spawn, the end conditions, the share of the max speed that a speed of 1 asks for, and how much to randomize the physics. To change the task, make a new config:
+`NeoRacerEnvConfig` holds the whole task: the track, the spawn, the share of the max speed that a speed of 1 asks for, how much to randomize the physics, and the three functions above. To change the track or the physics, make a new config:
 
 ```python
 from neoracer_mujoco.physics import PhysicsRanges, Range
@@ -120,7 +133,7 @@ env.close()
 
 When a row's episode ends, the row starts over in the same step. `out.obs` is the last observation of the old episode, and `state.obs` is the first of the new one. A row keeps the same spawn and physics until `env.respawn(state, rng)` draws new ones. The PPO script calls `respawn` once per rollout.
 
-The batch uses the env's `observation`, `lap_angle` and rewards, and array versions of its progress and termination checks. On the `Cpu` backend, a row's first episode steps exactly like `NeoRacerEnv` from the same spawn, bit for bit. The rows' speed loops tick together, so a row that starts over keeps the batch's ticks, while `NeoRacerEnv.reset` starts its own over. `Warp()` runs the rows on a CUDA GPU with MuJoCo Warp, all on one track.
+The batch uses the env's `lap_angle` and the config's `observe`, `terminate` and `reward`. On the `Cpu` backend, a row's first episode steps exactly like `NeoRacerEnv` from the same spawn, bit for bit. The rows' speed loops tick together, so a row that starts over keeps the batch's ticks, while `NeoRacerEnv.reset` starts its own over. `Warp()` runs the rows on a CUDA GPU with MuJoCo Warp, all on one track.
 
 ## Training a policy
 
@@ -137,9 +150,10 @@ python -m examples.train_ppo --eval ppo.npz --episodes 20
 
 ## Where the code lives
 
-- `src/neoracer_rl/envs/neoracer_env.py` has `NeoRacerEnv` and the functions that define the task: the observation, progress, termination and reward.
+- `src/neoracer_rl/envs/task.py` has the task: `Step`, the progress of a batch of rows, and the default observation, ends and reward.
+- `src/neoracer_rl/envs/neoracer_env.py` has `NeoRacerEnv`, its config, and the tracks with how progress is measured on them.
 - `src/neoracer_rl/envs/neoracer_batch.py` has `NeoRacerBatch` and the array versions of those functions.
-- A new part of the task, such as another reward term, goes in `neoracer_env.py` as a function that both the env and the batch can use. Physics and sensors belong in neoracer-mujoco.
+- A new part of the task, such as another reward term, is a function of a `Step` in `task.py`, which both the env and the batch then use. Physics and sensors belong in neoracer-mujoco.
 - `examples/` has `train_ppo.py`; `experiments.py`, which trains and evaluates every run of EXPERIMENTS.md and prints its tables; `random_actions.py`, which checks that the environment works; and the RACECAR Neo V2's policy: `train_v2.py`, `drive_v2.py` and `racecar_neo_v2/`.
 - `validation/` has the tests, and `users/<github-name>/` personal experiments.
 

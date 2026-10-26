@@ -46,7 +46,7 @@ from examples.train_ppo import (
     policy_arrays,
     train,
 )
-from neoracer_rl.envs import NeoRacerEnvConfig, neoracer_env
+from neoracer_rl.envs import NeoRacerEnvConfig, task
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
 
 CONFIG = NeoRacerEnvConfig(
@@ -68,7 +68,7 @@ that differs from the model, not measured on the real car."""
 
 type Array = npt.NDArray[np.float64]
 type EnvObservations = npt.NDArray[np.float32]
-"""Shape (N, neoracer_env.OBS_DIM)."""
+"""Shape (N, task.OBS_DIM)."""
 
 
 @dataclass(frozen=True)
@@ -120,7 +120,7 @@ def true_ranges(obs: EnvObservations) -> Array:
 
 def wheel_speed(obs: EnvObservations) -> Array:
     """The wheels' speed (N,) m/s, from the env's observation."""
-    return obs[:, neoracer_env.OBS_DIM - 1].astype(np.float64)
+    return obs[:, task.OBS_DIM - 1].astype(np.float64)
 
 
 def start(params: SensingParams, ranges: Array, rng: np.random.Generator) -> Sensing:
@@ -198,8 +198,7 @@ class RacecarCore:
 
     params: SensingParams
 
-    @property
-    def obs_dim(self) -> int:
+    def obs_dim(self, env_obs_dim: int) -> int:
         return policy.OBS_DIM
 
     def start(self, obs: EnvObservations, rng: np.random.Generator) -> Sensing:

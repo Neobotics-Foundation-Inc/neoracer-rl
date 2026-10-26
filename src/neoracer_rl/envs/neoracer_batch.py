@@ -8,9 +8,9 @@ choose:
   Warp. Optimized for a CUDA GPU. It needs neoracer-mujoco's jax extra.
 
 Each row is one NeoRacerEnv episode: the same track, actions, observations,
-rewards and episode ends (see neoracer_env.py). The env reads all of them
-from the sensordata that the backend returns, with the functions that
-NeoRacerEnv uses, so a row on the Cpu backend steps like NeoRacerEnv, bit
+rewards and episode ends (see neoracer_env.py). The env gives each step's
+data to the config's observe, terminate and reward (task.py), as NeoRacerEnv
+does with one row, so a row on the Cpu backend steps like NeoRacerEnv, bit
 for bit, from the same spawn.
 
 Quantities are in SI units unless a name says otherwise.
@@ -44,31 +44,27 @@ from typing import Any, assert_never
 import numpy as np
 import numpy.typing as npt
 from neoracer_mujoco import batch, contract, physics, sim, speed_loop
-from neoracer_mujoco.track_generation import shortest_loop_distance
 
 from .neoracer_env import (
     NeoRacerEnvConfig,
-    TerminationReason,
     arenas,
     lap_angle,
-    observation,
-    reward,
-    stuck_window_len,
+    progress_window_len,
     substeps_per_action,
 )
-
-type Observations = npt.NDArray[np.float32]
-"""Shape (nbatch, OBS_DIM)."""
-type Rows = npt.NDArray[np.float64]
-"""Shape (nbatch,)."""
-type Mask = npt.NDArray[np.bool_]
-"""Shape (nbatch,)."""
-type Ints = npt.NDArray[np.int64]
-"""Shape (nbatch,)."""
-
-REASONS: tuple[TerminationReason, ...] = ("rollover", "crash", "stuck", "lap_complete")
-"""The ends of an episode. A row's end code is 0 while its episode goes on,
-else k + 1 for the end REASONS[k]."""
+from .task import (
+    Ints,
+    Mask,
+    Observations,
+    ProgressRows,
+    Rows,
+    Step,
+    advance_rows,
+    first_end,
+    first_step,
+    restart_rows,
+    start_rows,
+)
 
 
 @dataclass(frozen=True)
@@ -85,62 +81,6 @@ class Warp:
 
 
 type Backend = Cpu | Warp
-
-
-@dataclass(frozen=True)
-class ProgressRows:
-    """Progress (see neoracer_env.Progress) of every row."""
-
-    angle: Rows
-    total: Rows
-    delta: Rows
-    steps: Ints
-    """The steps in this episode."""
-    window: npt.NDArray[np.float64]
-    """The totals of the last window_len steps, shape (nbatch, window_len),
-    as a ring: column k % window_len holds the total after step k of the
-    episode."""
-
-
-def start_rows(angle: Rows, window_len: int) -> ProgressRows:
-    """start_progress for every row."""
-    zeros = np.zeros_like(angle)
-    return ProgressRows(
-        angle=angle,
-        total=zeros,
-        delta=zeros,
-        steps=np.zeros(angle.shape, np.int64),
-        window=np.zeros((*angle.shape, window_len)),
-    )
-
-
-def advance_rows(p: ProgressRows, angle: Rows) -> ProgressRows:
-    """advance for every row."""
-    delta = shortest_loop_distance(angle - p.angle, 2.0 * np.pi)
-    total = p.total + delta
-    steps = p.steps + 1
-    window = p.window.copy()
-    window[np.arange(len(steps)), steps % window.shape[1]] = total
-    return ProgressRows(angle, total, delta, steps, window)
-
-
-def stuck_rows(p: ProgressRows, min_progress: float) -> Mask:
-    """is_stuck for every row."""
-    window_len = p.window.shape[1]
-    oldest = p.window[np.arange(len(p.steps)), (p.steps + 1) % window_len]
-    full = p.steps >= window_len - 1
-    return full & (np.abs(p.total - oldest) < min_progress)
-
-
-def restart_rows(p: ProgressRows, done: Mask, angle: Rows) -> ProgressRows:
-    """p, with the rows where done back at the start, at angle (rad)."""
-    return ProgressRows(
-        angle=np.where(done, angle, p.angle),
-        total=np.where(done, 0.0, p.total),
-        delta=np.where(done, 0.0, p.delta),
-        steps=np.where(done, 0, p.steps),
-        window=np.where(done[:, None], 0.0, p.window),
-    )
 
 
 @dataclass(frozen=True)
@@ -176,8 +116,11 @@ class StepResult:
     obs: Observations
     """The observation after the step."""
     reward: Rows
-    reason: npt.NDArray[np.int8]
-    """The code of the episode's end (REASONS)."""
+    reason: Ints
+    """The end of each row's episode: 0 while it goes on, else k + 1 for
+    ends[k]."""
+    ends: tuple[str, ...]
+    """The names of config.terminate's ends, in its order."""
     truncated: Mask
     """The episode reached max_episode_steps."""
     lap_frac: Rows
@@ -186,32 +129,6 @@ class StepResult:
     @property
     def done(self) -> Mask:
         return (self.reason > 0) | self.truncated
-
-
-def termination_codes(
-    config: NeoRacerEnvConfig,
-    upright_cos: Rows,
-    contact: Mask,
-    stuck: Mask,
-    total: Rows,
-) -> npt.NDArray[np.int8]:
-    """termination for every row, as codes (see REASONS)."""
-    cfg = config.termination
-    ends = (
-        upright_cos < cfg.upright_rollover_cos,
-        contact,
-        stuck,
-        total >= 2.0 * np.pi,
-    )
-    return np.select(ends, list(range(1, len(REASONS) + 1)), 0).astype(np.int8)
-
-
-def rewards(
-    config: NeoRacerEnvConfig, delta: Rows, codes: npt.NDArray[np.int8]
-) -> Rows:
-    """reward for every row."""
-    terminal = np.array([reward(config.reward, 0.0, r) for r in (None, *REASONS)])
-    return config.reward.progress_weight * delta + terminal[codes]
 
 
 class NeoRacerBatch:
@@ -247,9 +164,12 @@ class NeoRacerBatch:
         self._nstep = substeps_per_action(config, model)
         limits = contract.actuator_limits(model, self.scene.car)
         self._max_steer = limits.steer_rad
-        self._window_len = stuck_window_len(config)
+        self._window_len = progress_window_len(config)
         self._settled = [sim.settle(arena.scene.model) for arena in self._arenas]
         """The car at rest on the ground of each track, before the offset."""
+
+    def _observe(self, step: Step) -> Observations:
+        return np.asarray(self.config.observe(step), np.float32)
 
     def _lap_angles(self, track: Ints, sensordata: npt.NDArray) -> Rows:
         """lap_angle of each row on its own track, shape (nbatch,)."""
@@ -281,10 +201,12 @@ class NeoRacerBatch:
             rows.append(physics.sample(self.config.physics, rng))
         # Every track has the same sizes, so the sensor layout of one fits all.
         sensordata = np.stack([d.sensordata for d in datas])
+        angle = self._lap_angles(tracks, sensordata)
+        start = first_step(model, car, sensordata, start_rows(angle, self._window_len))
         return (
             self._sim.initial(datas, scenes, rows),
-            observation(model, car, sensordata),
-            self._lap_angles(tracks, sensordata),
+            self._observe(start),
+            angle,
             tracks,
             batch.drive_angle(model, car, np.stack([d.qpos for d in datas])),
         )
@@ -353,13 +275,13 @@ class NeoRacerBatch:
         contact = np.asarray((found > 0).any(axis=1))
 
         progress = advance_rows(state.progress, self._lap_angles(state.track, last))
-        stuck = stuck_rows(progress, cfg.termination.stuck_progress_rad)
-        upright_cos = batch.read(model, last, car.truth.zaxis)[:, 2]
-        codes = termination_codes(cfg, upright_cos, contact, stuck, progress.total)
+        step = Step(model, car, last, contact, progress, action)
+        codes, ends = first_end(cfg.terminate(step), self.nbatch)
         out = StepResult(
-            obs=observation(model, car, last),
-            reward=rewards(cfg, progress.delta, codes),
+            obs=self._observe(step),
+            reward=cfg.reward(step, ends),
             reason=codes,
+            ends=tuple(ends),
             truncated=(codes == 0) & (progress.steps >= cfg.max_episode_steps),
             lap_frac=progress.total / (2.0 * np.pi),
         )

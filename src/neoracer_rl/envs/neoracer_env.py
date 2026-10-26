@@ -32,8 +32,13 @@ Action space -- Box([-1,-1],[1,1]), float32:
     car has no speed loop), so there action[0] times max_speed is the
     throttle, which its model takes as a speed.
 
-Observation space -- Box(20,), float32, built only from sensors.SensorReadings
-(no raw qpos/qvel):
+The task (task.py): config.observe, config.terminate and config.reward are
+functions of a task.Step, what the env knows after a step. The defaults,
+CarObservation, LapEnds and ProgressReward, follow.
+
+Observation space -- CarObservation: Box(20,), float32, built only from
+sensors.SensorReadings (no raw qpos/qvel). Another config.observe gives an
+unbounded Box of its size.
     [0:8]   lidar_ranges   m, -1 = no hit or a bearing the car blocks
             (sensors.lidar_ranges). The model's beams read as the LiDAR's
             driver reports them: the last complete turn of its head, so a
@@ -54,7 +59,7 @@ does, on a batch.DataBatch of the env's MjData, so a row of NeoRacerBatch on
 the CPU backend steps the same as this env, bit for bit. reset() starts the
 speed loop over, its ticks from then on.
 
-Reward (RewardConfig, all weights explicit and UNTUNED, see reward):
+Reward (ProgressReward, all weights explicit and UNTUNED):
     r_t = progress_weight * delta_theta_t
     plus one-time terminal adjustments:
         + lap_bonus        on successful lap completion
@@ -62,8 +67,8 @@ Reward (RewardConfig, all weights explicit and UNTUNED, see reward):
         - crash_penalty    on crash termination
         - stuck_penalty    on stuck termination
     delta_theta_t is the signed net change in cumulative angle (radians)
-    around the loop's center this tick (see Progress). crash_penalty equals
-    stuck_penalty, so an episode that makes progress and then crashes
+    around the loop's center this tick (see task.ProgressRows). crash_penalty
+    equals stuck_penalty, so an episode that makes progress and then crashes
     returns more than one in which the car never moves.
 
 Physics randomization (config.physics, neoracer_mujoco.physics):
@@ -75,17 +80,18 @@ Physics randomization (config.physics, neoracer_mujoco.physics):
     again in the first steps of the episode.
 
 Termination (terminated=True) vs. truncation (truncated=True):
-    terminated: rollover (upright_cos below the threshold), crash (a car
-    geom touched a wall), stuck (no net progress in a window of time), or a
-    full lap (cumulative angle >= 2 pi in the forward direction of the
-    track, which is +). See termination.
+    terminated: an end of config.terminate. LapEnds's are rollover
+    (upright_cos below the threshold), crash (a car geom touched a wall),
+    stuck (no net progress over progress_window_s), and a full lap
+    (cumulative angle >= 2 pi in the forward direction of the track, which
+    is +).
     truncated: the episode reached max_episode_steps.
 """
 
 import copy
 import os
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict, assert_never
+from typing import Any, TypedDict, assert_never
 
 import gymnasium as gym
 import mujoco
@@ -98,7 +104,6 @@ from neoracer_mujoco import (
     batch,
     contract,
     physics,
-    sensors,
     sim,
     speed_loop,
 )
@@ -114,8 +119,23 @@ from neoracer_mujoco.track_generation import (
     generate_track,
     lap_distance,
     settings_for_difficulty,
-    shortest_loop_distance,
     to_spec,
+)
+
+from .task import (
+    CarObservation,
+    LapEnds,
+    Observe,
+    ProgressReward,
+    Reward,
+    SensorData,
+    Step,
+    Terminate,
+    advance_rows,
+    encoder_speed,
+    first_end,
+    first_step,
+    start_rows,
 )
 
 _TRACK = os.path.join(assets.TRACK_DIR, "loop_corridor.xml")
@@ -130,16 +150,8 @@ with one track per row needs."""
 NEORACER = neoracer_params()
 """The NeoRacer's settings beside its model, from its spec."""
 
-OBS_DIM = 20
-type Observation = npt.NDArray[np.float32]
-"""Shape (OBS_DIM,), in the layout of the module docstring."""
-type SensorData = npt.NDArray[np.float64]
-"""Shape (..., nsensordata)."""
-
 _ACTION_LOW = np.array([-1.0, -1.0], dtype=np.float32)
 _ACTION_HIGH = np.array([1.0, 1.0], dtype=np.float32)
-
-type TerminationReason = Literal["rollover", "crash", "stuck", "lap_complete"]
 
 
 class EnvInfo(TypedDict):
@@ -150,65 +162,14 @@ class EnvInfo(TypedDict):
     lap_frac: float
     """progress_rad / 2 pi in laps, negative if the car drove backward."""
     speed_ms: float
-    """estimated_speed, observation [19]."""
+    """The speed that the car's motor encoder measures (task.encoder_speed)."""
     upright_cos: float
     """cos(tilt) of the car body."""
     contact: bool
     """A car geom touched a wall in this step."""
     episode_time_s: float
-    termination_reason: TerminationReason | None
-
-
-@dataclass(frozen=True)
-class RewardConfig:
-    """Reward weights. Nobody has tuned them yet. See the module docstring for
-    the formula."""
-
-    progress_weight: float = 1.0
-    """Reward per radian of signed progress around the track."""
-    rollover_penalty: float = 10.0
-    """One-time penalty on rollover termination."""
-    crash_penalty: float = 5.0
-    """One-time penalty on crash termination. It equals stuck_penalty, so a
-    car that tries the first corner and hits the wall returns more than a car
-    that does not move."""
-    stuck_penalty: float = 5.0
-    """One-time penalty on stuck termination."""
-    lap_bonus: float = 10.0
-    """One-time bonus on a completed lap."""
-
-
-@dataclass(frozen=True)
-class TerminationConfig:
-    """Thresholds that end an episode. See termination."""
-
-    upright_rollover_cos: float = 0.5
-    """The car has rolled over when cos(tilt) is below this."""
-    stuck_window_s: float = 4.0
-    stuck_progress_rad: float = 0.05
-    """The car is stuck when its net progress over the window is less."""
-
-
-@dataclass(frozen=True)
-class ObservationBounds:
-    """Bounds of the observation space, with a margin over the peaks in 160
-    episodes on loop_corridor.xml at full throttle at the full battery voltage
-    with random steering, each run to its end (all end in a wall crash), with
-    the elliptic friction cone and impratio=10.
-    If the track, the spawn range or the car changes, measure the peaks again."""
-
-    lidar_m: float = 50.0
-    accel_m_s2: float = 1000.0
-    """The peak, in a crash, is about 290 m/s^2."""
-    gyro_rad_s: float = 100.0
-    """The peak is about 7 rad/s."""
-    steer_rad: float = 2.0
-    """The peak is about 0.43 rad. MuJoCo's 0.45 rad joint limit is soft, so
-    a crash could push past it."""
-    speed_m_s: float = 40.0
-    """The same limit as test_top_speed_bounded in neoracer-mujoco's
-    validation/test_conformance.py. The peak is about 3.5 m/s; the motor's
-    free speed is 4.3 m/s."""
+    termination_reason: str | None
+    """The end of config.terminate that ended the episode in this step."""
 
 
 @dataclass(frozen=True)
@@ -236,8 +197,8 @@ type Tracks = LoopCorridor | GeneratedTracks
 
 @dataclass(frozen=True)
 class NeoRacerEnvConfig:
-    """The car, its tracks, the control rate, the reward and the ends of an
-    episode."""
+    """The car, its tracks, the control rate, and the task: what a policy
+    sees, when its episode ends and what it earns (task.py)."""
 
     car_path: str = assets.DEFAULT_CAR
     tracks: Tracks = LoopCorridor()
@@ -254,12 +215,14 @@ class NeoRacerEnvConfig:
     (racecar_neo_v2_params)."""
     max_episode_steps: int = 1800
     """60 s at 30 Hz."""
-    obs_bounds: ObservationBounds = ObservationBounds()
     spawn: SpawnRange = SpawnRange()
-    termination: TerminationConfig = TerminationConfig()
-    reward: RewardConfig = RewardConfig()
     physics: PhysicsRanges = PhysicsRanges()
     """The range of each factor of the car's physics, drawn at each reset."""
+    progress_window_s: float = 4.0
+    """How far back a Step's progress.recent looks."""
+    observe: Observe = CarObservation()
+    terminate: Terminate = LapEnds()
+    reward: Reward = ProgressReward()
 
     def __post_init__(self) -> None:
         if not 0.0 < self.max_speed <= 1.0:
@@ -335,67 +298,10 @@ def substeps_per_action(config: NeoRacerEnvConfig, model: mujoco.MjModel) -> int
     return max(1, round((1.0 / config.control_hz) / model.opt.timestep))
 
 
-def stuck_window_len(config: NeoRacerEnvConfig) -> int:
-    """The number of totals in the stuck window: one more than the steps in
-    stuck_window_s."""
-    return max(1, round(config.termination.stuck_window_s * config.control_hz)) + 1
-
-
-def _observation_space(b: ObservationBounds) -> spaces.Box:
-    low = np.concatenate(
-        [
-            np.full(8, -1.0),  # lidar: -1 is the sensor's own "no hit" value
-            np.full(3, -b.accel_m_s2),  # imu_accel
-            np.full(3, -b.gyro_rad_s),  # imu_gyro
-            np.full(4, -1.0),  # imu_quat (unit quaternion component range)
-            np.array([-b.steer_rad]),  # steer_cmd_pos
-            np.array([-b.speed_m_s]),  # estimated_speed
-        ]
-    ).astype(np.float32)
-    high = np.concatenate(
-        [
-            np.full(8, b.lidar_m),
-            np.full(3, b.accel_m_s2),
-            np.full(3, b.gyro_rad_s),
-            np.full(4, 1.0),
-            np.array([b.steer_rad]),
-            np.array([b.speed_m_s]),
-        ]
-    ).astype(np.float32)
-    return spaces.Box(low=low, high=high, shape=(OBS_DIM,), dtype=np.float32)
-
-
-def observation(
-    model: mujoco.MjModel, car: Car, sensordata: SensorData
-) -> npt.NDArray[np.float32]:
-    """The observation (..., OBS_DIM) in sensordata (..., nsensordata), from
-    the car's sensors only. See the module docstring for the layout."""
-    s = car.sensors
-
-    def read(*sensors: mujoco.MjsSensor) -> SensorData:
-        return np.concatenate([batch.read(model, sensordata, x) for x in sensors], -1)
-
-    beams = (
-        s.lidar_000,
-        s.lidar_045,
-        s.lidar_090,
-        s.lidar_135,
-        s.lidar_180,
-        s.lidar_225,
-        s.lidar_270,
-        s.lidar_315,
-    )
-    # A beam that the car blocks reads no return, as sensors.read gives it.
-    blocked = np.array([beam.name in s.blocked for beam in beams])
-    lidar = np.where(blocked, sensors.NO_RETURN, read(*beams))
-    wheels = read(s.fl_wheel_vel, s.fr_wheel_vel, s.rl_wheel_vel, s.rr_wheel_vel)
-    # The mean wheel speed (rad/s) is sensors.motor_encoder_rad_s, the reading
-    # of the car's one motor encoder, and the speed (m/s) is that times the
-    # car's wheel radius.
-    motor = (wheels[..., 0] + wheels[..., 1] + wheels[..., 2] + wheels[..., 3]) / 4
-    speed = (motor * contract.wheel_radius(model, car))[..., None]
-    parts = (lidar, read(s.imu_accel, s.imu_gyro, s.imu_quat, s.steer_cmd_pos), speed)
-    return np.concatenate([p.astype(np.float32) for p in parts], -1)
+def progress_window_len(config: NeoRacerEnvConfig) -> int:
+    """The totals that a Step's progress keeps: one more than the steps in
+    progress_window_s."""
+    return max(1, round(config.progress_window_s * config.control_hz)) + 1
 
 
 def angle_around_center(
@@ -405,78 +311,6 @@ def angle_around_center(
     center of the loop, shape (...,)."""
     pos = batch.read(model, sensordata, car.truth.pos)
     return np.arctan2(pos[..., 1], pos[..., 0])
-
-
-@dataclass(frozen=True)
-class Progress:
-    """Signed progress of the car around the track, as lap_angle measures it:
-    2 pi is one lap. + is the forward-travel direction."""
-
-    angle: float
-    """The car's lap_angle at the last step."""
-    total: float
-    """The progress in this episode."""
-    delta: float
-    """The progress in the last step."""
-    window: tuple[float, ...]
-    """total at each of the last steps, oldest first."""
-
-
-def start_progress(angle: float) -> Progress:
-    return Progress(angle=angle, total=0.0, delta=0.0, window=(0.0,))
-
-
-def advance(p: Progress, angle: float, window_len: int) -> Progress:
-    """Progress after the car moved to angle (rad). Keeps the last
-    window_len totals."""
-    delta = float(shortest_loop_distance(np.asarray(angle - p.angle), 2.0 * np.pi))
-    total = p.total + delta
-    return Progress(
-        angle=angle, total=total, delta=delta, window=(*p.window, total)[-window_len:]
-    )
-
-
-def is_stuck(p: Progress, window_len: int, min_progress: float) -> bool:
-    if len(p.window) < window_len:
-        return False
-    return abs(p.total - p.window[0]) < min_progress
-
-
-def termination(
-    cfg: TerminationConfig,
-    upright_cos: float,
-    contact: bool,
-    stuck: bool,
-    total_progress: float,
-) -> TerminationReason | None:
-    """The reason the episode ends at this step, or None if it continues."""
-    if upright_cos < cfg.upright_rollover_cos:
-        return "rollover"
-    if contact:
-        return "crash"
-    if stuck:
-        return "stuck"
-    if total_progress >= 2.0 * np.pi:
-        return "lap_complete"
-    return None
-
-
-def reward(cfg: RewardConfig, delta: float, reason: TerminationReason | None) -> float:
-    r = cfg.progress_weight * delta
-    match reason:
-        case None:
-            pass
-        case "rollover":
-            r -= cfg.rollover_penalty
-        case "crash":
-            r -= cfg.crash_penalty
-        case "stuck":
-            r -= cfg.stuck_penalty
-        case "lap_complete":
-            r += cfg.lap_bonus
-        case _:
-            assert_never(reason)
-    return float(r)
 
 
 class NeoRacerEnv(gym.Env):
@@ -532,17 +366,26 @@ class NeoRacerEnv(gym.Env):
         self.action_space = spaces.Box(
             low=_ACTION_LOW, high=_ACTION_HIGH, dtype=np.float32
         )
-        self.observation_space = _observation_space(config.obs_bounds)
-
-        self._window_len = stuck_window_len(config)
+        self._window_len = progress_window_len(config)
+        self._progress = start_rows(np.zeros(1), self._window_len)
+        """The episode's progress, a batch of one row."""
+        match config.observe:
+            case CarObservation() as observe:
+                self.observation_space = observe.space()
+            case observe:
+                start = sim.settle(self.scene.model)
+                angle = lap_angle(self._arena, start.sensordata[None])
+                step = first_step(
+                    self.model,
+                    self._car,
+                    start.sensordata[None],
+                    start_rows(angle, self._window_len),
+                )
+                shape = observe(step).shape[1:]
+                self.observation_space = spaces.Box(-np.inf, np.inf, shape, np.float32)
 
         self._viewer = None
         self._viewer_model = self.model
-
-        # Episode state. gymnasium requires reset() before step(), and
-        # reset() sets these values again.
-        self._step_count = 0
-        self._progress = start_progress(0.0)
 
     # --- internal helpers -----------------------------------------------
 
@@ -573,25 +416,18 @@ class NeoRacerEnv(gym.Env):
             )
         return bool((batch.read(model, sensordata, car.truth.wall_contact) > 0).any())
 
-    def _build_observation(self) -> tuple[Observation, float]:
-        """The observation, and the estimated speed (m/s) in it."""
-        obs = observation(self.model, self._car, self.data.sensordata)
-        return obs, float(obs[OBS_DIM - 1])
+    def _observe(self, step: Step) -> npt.NDArray[np.float32]:
+        return np.asarray(self.config.observe(step)[0], np.float32)
 
-    def _build_info(
-        self,
-        speed: float,
-        contact: bool,
-        upright_cos: float,
-        reason: TerminationReason | None,
-    ) -> EnvInfo:
+    def _info(self, step: Step, reason: str | None) -> EnvInfo:
+        total = float(step.progress.total[0])
         return {
-            "progress_rad": self._progress.total,
-            "lap_frac": self._progress.total / (2.0 * np.pi),
-            "speed_ms": speed,
-            "upright_cos": upright_cos,
-            "contact": contact,
-            "episode_time_s": self._step_count * self.effective_control_dt,
+            "progress_rad": total,
+            "lap_frac": total / (2.0 * np.pi),
+            "speed_ms": float(encoder_speed(step)[0]),
+            "upright_cos": float(step.read(self._car.truth.zaxis)[0, 2]),
+            "contact": bool(step.contact[0]),
+            "episode_time_s": int(step.progress.steps[0]) * self.effective_control_dt,
             "termination_reason": reason,
         }
 
@@ -616,14 +452,11 @@ class NeoRacerEnv(gym.Env):
         if params is not None:
             self.loop = speed_loop.start(params, np.array([self._drive_angle()]))
 
-        self._step_count = 0
-        self._progress = start_progress(self._lap_angle())
-
-        obs, speed = self._build_observation()
-        upright_cos = sim.car_upright_cos(self.data, self._car)
-        info = self._build_info(
-            speed, contact=False, upright_cos=upright_cos, reason=None
+        self._progress = start_rows(np.array([self._lap_angle()]), self._window_len)
+        step = first_step(
+            self.model, self._car, self.data.sensordata[None].copy(), self._progress
         )
+        obs, info = self._observe(step), self._info(step, None)
         return obs, info
 
     def step(self, action):
@@ -631,32 +464,24 @@ class NeoRacerEnv(gym.Env):
             np.asarray(action, dtype=np.float32), _ACTION_LOW, _ACTION_HIGH
         )
         steer = float(action[1]) * self._limits.steer_rad
-        contact_this_tick = self._drive(float(action[0]), steer)
-
-        self._step_count += 1
-        window_len = self._window_len
-        self._progress = advance(self._progress, self._lap_angle(), window_len)
-
-        upright_cos = sim.car_upright_cos(self.data, self._car)
-        stuck = is_stuck(
-            self._progress, window_len, self.config.termination.stuck_progress_rad
+        contact = self._drive(float(action[0]), steer)
+        self._progress = advance_rows(self._progress, np.array([self._lap_angle()]))
+        step = Step(
+            self.model,
+            self._car,
+            self.data.sensordata[None].copy(),
+            np.array([contact]),
+            self._progress,
+            action[None],
         )
-        reason = termination(
-            self.config.termination,
-            upright_cos,
-            contact_this_tick,
-            stuck,
-            self._progress.total,
-        )
+        codes, ends = first_end(self.config.terminate(step), 1)
+        reason = list(ends)[codes[0] - 1] if codes[0] else None
         terminated = reason is not None
-        truncated = (
-            not terminated
-        ) and self._step_count >= self.config.max_episode_steps
-
-        step_reward = reward(self.config.reward, self._progress.delta, reason)
-        obs, speed = self._build_observation()
-        info = self._build_info(speed, contact_this_tick, upright_cos, reason)
-
+        truncated = (not terminated) and int(
+            self._progress.steps[0]
+        ) >= self.config.max_episode_steps
+        step_reward = float(self.config.reward(step, ends)[0])
+        obs, info = self._observe(step), self._info(step, reason)
         return obs, step_reward, terminated, truncated, info
 
     def render(self):

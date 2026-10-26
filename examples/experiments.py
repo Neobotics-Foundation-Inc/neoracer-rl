@@ -132,8 +132,10 @@ def runs() -> tuple[list[Run], list[Run]]:
 
 def train(out: Path, run: Run) -> None:
     """Train run with train_ppo, its output in out/<name>.log, the time it
-    took on the log's last line."""
-    if (out / f"{run.name}.npz").exists():
+    took on the log's last line. The log appears only once it is whole, and a
+    run with its log and its policy is not trained again."""
+    log_path = out / f"{run.name}.log"
+    if log_path.exists() and (out / f"{run.name}.npz").exists():
         return
     command = [
         sys.executable,
@@ -145,9 +147,11 @@ def train(out: Path, run: Run) -> None:
         *("--out", str(out / f"{run.name}.npz")),
     ]
     start = time.monotonic()
-    with (out / f"{run.name}.log").open("w") as log:
+    part = out / f"{run.name}.log.part"
+    with part.open("w") as log:
         subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
         log.write(f"wall {time.monotonic() - start:.0f} s\n")
+    part.replace(log_path)
 
 
 type Job = tuple[str, str, tuple[str, float] | None, int]
@@ -204,12 +208,15 @@ def run_job(job: tuple[Path, Job]) -> tuple[str, dict[str, Any]]:
 
 
 def evaluate_all(out: Path) -> dict[str, dict[str, Any]]:
-    """Every job's evaluation, from out/evaluations.json once it is there."""
+    """Every job's evaluation, from out/evaluations.json once it is there. The
+    file appears only once it is whole."""
     path = out / "evaluations.json"
     if not path.exists():
         with Pool(CORES) as pool:
             results = dict(pool.imap_unordered(run_job, [(out, j) for j in jobs()]))
-        path.write_text(json.dumps(results, indent=1, sort_keys=True))
+        part = out / "evaluations.json.part"
+        part.write_text(json.dumps(results, indent=1, sort_keys=True))
+        part.replace(path)
     return json.loads(path.read_text())
 
 

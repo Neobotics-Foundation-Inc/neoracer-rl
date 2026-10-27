@@ -612,12 +612,16 @@ def format_log(log: UpdateLog, steps_per_s: float) -> str:
     ret = np.mean([e.episode_return for e in eps]) if eps else float("nan")
     lap = np.mean([e.lap_frac for e in eps]) if eps else float("nan")
     reasons = Counter(e.outcome for e in eps)
+    lap_task = ("lap_complete", "crash", "stuck", "rollover", "truncated")
+    others = "".join(
+        f" {name} {n:2d}" for name, n in sorted(reasons.items()) if name not in lap_task
+    )
     return (
         f"update {log.update:4d}  steps {log.env_steps:8d}  {steps_per_s:5.0f} steps/s  "
         f"episodes {len(eps):3d}  return {ret:+7.2f}  lap_frac {lap:+.3f}  "
         f"laps {reasons['lap_complete']:2d} crash {reasons['crash']:2d} "
         f"stuck {reasons['stuck']:2d} rollover {reasons['rollover']:2d} "
-        f"trunc {reasons['truncated']:2d}  "
+        f"trunc {reasons['truncated']:2d}{others}  "
         f"pi {float(log.loss.policy_loss):+.4f} v {float(log.loss.value_loss):.4f} "
         f"kl {float(log.loss.approx_kl):.4f} clip {float(log.loss.clip_frac):.2f} "
         f"std {','.join(f'{s:.2f}' for s in log.action_std)}"

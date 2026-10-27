@@ -318,14 +318,20 @@ def test_parse_log_reads_back_what_format_log_writes():
     """parse_log gives the env steps, the speed, the episodes and the laps of
     a line that format_log wrote, whether or not episodes ended in the
     update, and the rest of the line, the same at any speed; and None for
-    any other line."""
+    any other line. An end that the lap task does not have, such as a race's
+    touch, is counted after the truncations."""
     loss = LossInfo(*(jnp.float32(0.0),) * 5)
     episodes = (
         EpisodeResult(16.3, 1.0, "lap_complete", 900),
         EpisodeResult(-5.7, -0.1, "crash", 40),
         EpisodeResult(10.1, 1.0, "lap_complete", 950),
     )
-    for name, ended, laps in (("no episode", (), 0), ("three", episodes, 2)):
+    touch = (*episodes, EpisodeResult(-4.0, 0.1, "touch", 60))
+    for name, ended, laps in (
+        ("no episode", (), 0),
+        ("three", episodes, 2),
+        ("a touch", touch, 2),
+    ):
         with case(name):
             log = UpdateLog(7, 14336, ended, loss, (0.9, 1.1))
             fast, slow = (
@@ -334,4 +340,7 @@ def test_parse_log_reads_back_what_format_log_writes():
             )
             assert slow is not None
             assert fast == LogLine(14336, 1234, len(ended), laps, slow.seeded)
+    assert "trunc  0 touch  1  pi" in format_log(
+        UpdateLog(7, 0, touch, loss, (1.0,)), 1.0
+    )
     assert parse_log("[train_ppo] saved the policy to ppo.npz") is None

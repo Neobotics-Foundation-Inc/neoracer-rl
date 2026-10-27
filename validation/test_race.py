@@ -201,6 +201,24 @@ def test_a_learner_of_a_race_observes_its_own_cars_lidar():
     env.close()
 
 
+def _ends_of_the_car(step: Step) -> dict[str, np.ndarray]:
+    """An end named after the step's car, so each car's has another name."""
+    return {step.car.body.name: np.zeros(len(step.contact), np.bool_)}
+
+
+def test_a_race_refuses_ends_that_differ_from_car_to_car():
+    """A terminate that names the ends of two learners differently raises
+    ValueError at the first step, since a row's end code would mean another
+    end in each."""
+    config = RaceConfig(
+        env=NeoRacerEnvConfig(terminate=_ends_of_the_car), cars=(Racer(), AHEAD)
+    )
+    env, state = _race(1, config)
+    with pytest.raises(ValueError, match="same ends"):
+        env.step(state, np.stack([STILL, STILL]))
+    env.close()
+
+
 def test_a_race_needs_a_learner_and_a_controller_needs_a_speed_loop():
     """A race of no Learner, and a controller on a car whose model holds its
     own speed, raise ValueError."""

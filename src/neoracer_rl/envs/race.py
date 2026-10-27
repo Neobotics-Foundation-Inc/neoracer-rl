@@ -15,9 +15,10 @@ and they collide.
 
 A Learner is a car of the policy in training. The env takes its action, as
 NeoRacerEnv takes one, and calls config.env's observe, terminate and reward
-(task.py) with its Step. The Step's rivals are the other cars, so a function
-can read their sensors, how far ahead they are, and their contacts with the
-car. config.agents groups the learners into agents:
+(task.py) with its Step, and terminate must give every learner the same ends,
+in the same order. The Step's rivals are the other cars, so a function can
+read their sensors, how far ahead they are, and their contacts with the car.
+config.agents groups the learners into agents:
 
 - Each: every learner is an agent of its own, a row of the env's arrays.
   One policy drives them all, each from its own observation (decentralized).

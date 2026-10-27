@@ -469,6 +469,9 @@ class NeoRacerRace:
         steps = self._steps(last, walls, touch, progress, actions)
         learners = [steps[k] for k in self._learners]
         results = [first_end(env.terminate(s), self.nrace) for s in learners]
+        names = tuple(results[0][1])
+        if any(tuple(ends) != names for _, ends in results):
+            raise ValueError("terminate must give every car the same ends, in order")
         codes = [code for code, _ in results]
         rewards = [env.reward(s, ends) for s, (_, ends) in zip(learners, results)]
         done = np.any([code > 0 for code in codes], axis=0) | (
@@ -478,7 +481,7 @@ class NeoRacerRace:
             [self._observe(s) for s in learners],
             rewards,
             codes,
-            tuple(results[0][1]),
+            names,
             done,
             progress,
         )

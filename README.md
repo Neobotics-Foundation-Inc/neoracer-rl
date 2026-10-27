@@ -182,7 +182,7 @@ python -m examples.train_race --total-steps 400000 --seed 1 --out race.npz
 python -m examples.train_race --eval race.npz --races 20
 ```
 
-Touching the other car ends the race as a crash does. `train` takes a `RaceConfig`, and the policy has as many actions as the env's agent, so a `Joint` agent of several learners trains with the same code.
+Touching the other car ends the race as a crash does. In [EXPERIMENTS.md](EXPERIMENTS.md#racing-a-controller), policies that lap alone learn in races to follow the car ahead and lap behind it, but none passes it. `train` takes a `RaceConfig`, and the policy has as many actions as the env's agent, so a `Joint` agent of several learners trains with the same code.
 
 `examples/train_v2.py` trains a policy for another car, MIT's RACECAR Neo V2, on what that car's `racecar_core` library shows a program: a LiDAR scan up to two turns of its head old, and its encoder's speed. [examples/racecar_neo_v2](examples/racecar_neo_v2/README.md) holds the program that drives the real car with it.
 

@@ -2,7 +2,8 @@
 Laws for races (neoracer_rl.envs.race, stepped by neoracer_batch.NeoRacerRace):
 the agents of Each and Joint are the same learners, a Policy car drives as a
 Learner given its actions, each car's Step sees the others, a learner's end
-ends its race, and the controllers drive. validation/test_neoracer_batch.py
+ends its race, the controllers drive, and no car of a grid starts against a
+wall or another car. validation/test_neoracer_batch.py
 has the laws of NeoRacerBatch, a race of one Learner.
 """
 
@@ -14,8 +15,9 @@ import pytest
 from cases import case
 from neoracer_mujoco import assets, batch, sensors
 from neoracer_mujoco.racecar import racecar_neo_v2_params
+from neoracer_mujoco.sim import SpawnRange
 
-from neoracer_rl.envs import NeoRacerEnvConfig, Step
+from neoracer_rl.envs import GeneratedTracks, NeoRacerEnvConfig, Step
 from neoracer_rl.envs.neoracer_batch import BatchState, Cpu, NeoRacerRace, Warp
 from neoracer_rl.envs.race import (
     Joint,
@@ -30,6 +32,12 @@ from neoracer_rl.envs.task import CarObservation, Observations
 
 AHEAD = Racer(Learner(), (1.0, 0.0))
 """A learner 1 m ahead of the track's start."""
+
+GRID = tuple(
+    Racer(offset=(-(k // 2) * 1.2, 0.275 if k % 2 else -0.275)) for k in range(4)
+)
+"""Four learners on a grid at the track's start: rows of two, 0.55 m apart,
+1.2 m between rows."""
 
 STILL = np.array([0.0, 0.0], np.float32)
 FULL = np.array([1.0, 0.0], np.float32)
@@ -252,3 +260,28 @@ def test_a_race_on_warp_follows_the_race_on_the_cpu():
     np.testing.assert_allclose(
         observations[1][:, :8], observations[0][:, :8], atol=0.05
     )
+
+
+def _touches(step: Step) -> Observations:
+    """Whether the car touched a wall, and each rival, in the step."""
+    touched = [step.contact, *(rival.contact for rival in step.rivals)]
+    return np.stack(touched, axis=1).astype(np.float32)
+
+
+def test_no_car_of_a_grid_starts_against_a_wall_or_another_car():
+    """On generated tracks, gentle and tight, no car of a grid of four that
+    stands still touches a wall in the first step after a spawn, nor
+    another car: the grid's cars stand farther apart than a spawn moves
+    them."""
+    spawn = SpawnRange(lateral=0.02, yaw=0.1)
+    for difficulty in (1, 3):
+        tracks = GeneratedTracks(difficulty, count=6)
+        env_config = NeoRacerEnvConfig(tracks=tracks, spawn=spawn, observe=_touches)
+        env = NeoRacerRace(Cpu(nthread=0), 16, RaceConfig(env_config, GRID))
+        for seed in range(3):
+            with case((difficulty, seed)):
+                state = env.reset(np.random.default_rng(seed))
+                state, out = env.step(state, np.zeros((env.nbatch, 2), np.float32))
+                assert not out.done.any()
+                assert not out.obs.any()
+        env.close()

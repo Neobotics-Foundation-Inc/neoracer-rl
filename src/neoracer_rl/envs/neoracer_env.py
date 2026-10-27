@@ -11,9 +11,11 @@ Quantities are in SI units unless a name says otherwise.
 
 Track (config.tracks): LoopCorridor, assets/tracks/loop_corridor.xml, or
 GeneratedTracks, a pool of tracks from neoracer_mujoco.track_generation. With
-a pool, reset() draws the track of each episode. Progress is the angle around
-the center of the loop on loop_corridor, and the distance along the
-centerline on a generated track, as an angle: 2 pi is one lap on both.
+a pool, reset() draws the track of each episode. A pool leaves out the
+tracks where a spawn could put a car against a wall (arenas_of). Progress is
+the angle around the center of the loop on loop_corridor, and the distance
+along the centerline on a generated track, as an angle: 2 pi is one lap on
+both.
 
 Action space -- Box([-1,-1],[1,1]), float32:
     action[0] = normalized speed, + = forward
@@ -119,6 +121,7 @@ from neoracer_mujoco.track_generation import (
     WallParams,
     generate_track,
     lap_distance,
+    pose_along,
     settings_for_difficulty,
     to_spec,
 )
@@ -181,7 +184,8 @@ class LoopCorridor:
 @dataclass(frozen=True)
 class GeneratedTracks:
     """A pool of generated tracks: the first count seeds, from first_seed
-    on, that give a track of this difficulty."""
+    on, that give a track of this difficulty whose start has room for the
+    env's cars (arenas_of)."""
 
     difficulty: Difficulty = 1
     """From 0, gentle and wide, to 3, tight and narrow."""
@@ -240,20 +244,48 @@ class Arena:
 
 
 def arenas(config: NeoRacerEnvConfig, visuals: bool) -> tuple[Arena, ...]:
-    """The tracks of config.tracks, with the car of config. Raise ValueError
-    if the seeds give too few generated tracks."""
-    return arenas_of(config, (assets.Entry("", car=config.car_path),), visuals)
+    """The tracks of config.tracks, with the car of config at the start, as
+    arenas_of gives them."""
+    return arenas_of(config, ((0.0, 0.0),), visuals)
 
 
 def arenas_of(
-    config: NeoRacerEnvConfig, entries: Sequence[assets.Entry], visuals: bool
+    config: NeoRacerEnvConfig,
+    offsets: Sequence[tuple[float, float]],
+    visuals: bool,
 ) -> tuple[Arena, ...]:
-    """The tracks of config.tracks, with the cars of entries
-    (assets.compose_cars), as arenas gives them with one car."""
+    """The tracks of config.tracks, with a car of config at each of offsets
+    (m) from the track's start: along its centerline, + forward, and across
+    it, + left, facing along the track (pose_along). One car keeps its names
+    unprefixed; several are behind the prefixes car0/, car1/, ...
+    (assets.compose_cars). On loop_corridor, whose start is on a straight,
+    the offsets are in the start's frame.
+
+    A generated track where a spawn of config.spawn could put a car against
+    a wall (sim.spawn_clears_walls) is left out, as a seed that gives no
+    track is. Raise ValueError if one could on loop_corridor, or if the
+    seeds give too few tracks."""
+    prefixes = [""] if len(offsets) == 1 else [f"car{k}/" for k in range(len(offsets))]
+
+    def scene_of(
+        spec: mujoco.MjSpec, poses: Sequence[tuple[tuple[float, float], float]]
+    ) -> Scene:
+        entries = [
+            assets.Entry(prefix, offset, heading, config.car_path)
+            for prefix, (offset, heading) in zip(prefixes, poses, strict=True)
+        ]
+        return assets.compose_cars(spec, entries, visuals)
+
     match config.tracks:
         case LoopCorridor() as loop:
             spec = mujoco.MjSpec.from_file(_TRACK)
-            return (Arena(assets.compose_cars(spec, entries, visuals), loop),)
+            scene = scene_of(spec, [(offset, 0.0) for offset in offsets])
+            if not sim.spawn_clears_walls(scene, config.spawn):
+                raise ValueError(
+                    f"a spawn of {config.spawn} can put a car at {offsets} against "
+                    "a wall of loop_corridor"
+                )
+            return (Arena(scene, loop),)
         case GeneratedTracks(difficulty=difficulty, count=count, first_seed=first):
             settings = settings_for_difficulty(difficulty)
             walls = WallParams(boxes_per_wall=WALL_BOXES)
@@ -261,9 +293,10 @@ def arenas_of(
             for seed in range(first, first + 4 * count):
                 match generate_track(seed, settings):
                     case Track() as track:
-                        spec = to_spec(track, walls)
-                        scene = assets.compose_cars(spec, entries, visuals)
-                        pool.append(Arena(scene, track))
+                        poses = [pose_along(track, *offset) for offset in offsets]
+                        scene = scene_of(to_spec(track, walls), poses)
+                        if sim.spawn_clears_walls(scene, config.spawn):
+                            pool.append(Arena(scene, track))
                     case NoValidTrack():
                         pass
                     case other:
@@ -272,7 +305,8 @@ def arenas_of(
                     return tuple(pool)
             raise ValueError(
                 f"seeds {first} to {first + 4 * count - 1} gave only {len(pool)} "
-                f"tracks of difficulty {difficulty}, not {count}"
+                f"tracks of difficulty {difficulty} with room for cars at {offsets}, "
+                f"not {count}"
             )
         case other:
             assert_never(other)

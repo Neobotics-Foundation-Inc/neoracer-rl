@@ -49,7 +49,7 @@ from typing import Any, assert_never
 import mujoco
 import numpy as np
 import numpy.typing as npt
-from neoracer_mujoco import assets, batch, contract, physics, sim, speed_loop
+from neoracer_mujoco import batch, contract, physics, sim, speed_loop
 from neoracer_mujoco.control import PDState, track_centering, wall_following
 
 from .neoracer_env import (
@@ -205,13 +205,7 @@ class NeoRacerRace:
                 self.nbatch, self.action_dim = nrace, 2 * len(self._learners)
             case other:
                 assert_never(other)
-        # One car keeps its names unprefixed, as NeoRacerEnv's car has them.
-        prefixes = [""] if len(cars) == 1 else [f"car{k}/" for k in range(len(cars))]
-        entries = [
-            assets.Entry(prefix, racer.offset, car=env.car_path)
-            for prefix, racer in zip(prefixes, cars, strict=True)
-        ]
-        self._arenas = arenas_of(env, entries, visuals=False)
+        self._arenas = arenas_of(env, [racer.offset for racer in cars], visuals=False)
         self.scene = self._arenas[0].scene
         model = self.scene.model
         self._sim: batch.Batch[Any, Any, Any]

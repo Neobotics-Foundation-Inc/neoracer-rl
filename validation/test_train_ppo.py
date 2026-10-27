@@ -24,6 +24,7 @@ from examples.train_ppo import (
     LossInfo,
     ObsStats,
     PPOParams,
+    Resume,
     RolloutState,
     UpdateLog,
     add_track_arguments,
@@ -255,6 +256,27 @@ def test_training_takes_the_size_of_the_agents_action():
     assert net.actor[0].weight.shape[0] == 2 * OBS_DIM
     assert net.actor[-1].weight.shape[1] == net.log_std.shape[0] == 4
     assert stats.count == 32
+
+
+def test_training_resumes_a_saved_policy_and_what_it_saw():
+    """Resumed for no steps, training gives back the network and statistics
+    it was given. Resumed for an update, it goes on from them: the network
+    has the saved one's sizes and the statistics count on from the saved
+    count."""
+    params = PPOParams(rollout_steps=16, minibatches=1, hidden=(8,))
+    race = RaceConfig(cars=(Racer(),))
+    saved = train(params, 32, 0, 2, Cpu(nthread=0), race, Exact(), Fresh())
+    same = train(params, 0, 1, 2, Cpu(nthread=0), race, Exact(), Resume(*saved))
+    for a, b in zip(jax.tree.leaves(same), jax.tree.leaves(saved), strict=True):
+        np.testing.assert_array_equal(a, b)
+    net, stats = train(params, 32, 1, 2, Cpu(nthread=0), race, Exact(), Resume(*saved))
+    assert stats.count == saved[1].count + 32
+    for a, b in zip(jax.tree.leaves(net), jax.tree.leaves(saved[0]), strict=True):
+        assert a.shape == b.shape
+    assert any(
+        not np.array_equal(a, b)
+        for a, b in zip(jax.tree.leaves(net), jax.tree.leaves(saved[0]), strict=True)
+    )
 
 
 def test_truncation_bootstraps_from_the_last_observation_of_the_episode():

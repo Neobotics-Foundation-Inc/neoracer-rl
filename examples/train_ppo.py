@@ -658,6 +658,22 @@ def parse_log(line: str) -> LogLine | None:
     return LogLine(steps, rate, episodes, laps, seeded)
 
 
+@dataclass(frozen=True)
+class Fresh:
+    """A new network, which has seen no observations."""
+
+
+@dataclass(frozen=True)
+class Resume:
+    """A trained network, and the statistics of the observations it saw."""
+
+    net: ActorCritic
+    stats: ObsStats
+
+
+type Init = Fresh | Resume
+
+
 def train[S](
     params: PPOParams,
     total_steps: int,
@@ -666,24 +682,32 @@ def train[S](
     backend: Backend,
     config: RaceConfig,
     interface: Interface[S],
+    init: Init,
 ) -> tuple[ActorCritic, ObsStats]:
     """Train on num_envs races of config for at least total_steps agent
-    steps. Print one log line per update. The spawns, the physics and the
-    interface's randomness come from default_rng(seed); each update draws
-    new spawns and physics."""
+    steps, from init. Print one log line per update. The spawns, the physics
+    and the interface's randomness come from default_rng(seed); each update
+    draws new spawns and physics."""
     key = jax.random.key(seed)
     key, init_key = jax.random.split(key)
     env = NeoRacerRace(backend, num_envs, config)
     rng = np.random.default_rng(seed)
     env_state = env.reset(rng)
     obs_dim = interface.obs_dim(env_state.obs.shape[1])
-    net = init_actor_critic(init_key, params, obs_dim, env.action_dim)
+    match init:
+        case Fresh():
+            net = init_actor_critic(init_key, params, obs_dim, env.action_dim)
+            stats = empty_obs_stats(obs_dim)
+        case Resume(net=net, stats=stats):
+            pass
+        case _:
+            assert_never(init)
     opt_state = init_opt_state(net, params)
     state = RolloutState(
         env=env_state,
         episode_return=np.zeros(env.nbatch),
         episode_steps=np.zeros(env.nbatch, dtype=np.int64),
-        stats=empty_obs_stats(obs_dim),
+        stats=stats,
         carry=interface.start(env_state.obs, rng),
     )
     steps_per_update = params.rollout_steps * env.nbatch
@@ -973,7 +997,14 @@ def main() -> None:
             assert_never(kind)
     alone = RaceConfig(config, (Racer(),))
     net, stats = train(
-        params, args.total_steps, args.seed, args.num_envs, backend, alone, Exact()
+        params,
+        args.total_steps,
+        args.seed,
+        args.num_envs,
+        backend,
+        alone,
+        Exact(),
+        Fresh(),
     )
     if args.out is not None:
         save_policy(args.out, net, stats)

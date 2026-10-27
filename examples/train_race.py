@@ -16,8 +16,12 @@ episode ends, and prints how each ended, the laps of both cars, and how far
 ahead of the opponent the learner finished. A policy that train_ppo trained
 alone evaluates here too.
 
+A run can start from a policy that train_ppo trained alone (--init-from),
+so that it learns to race from a car that already laps.
+
 Usage:
     python3 -m examples.train_race --total-steps 400000 --seed 1 --out race.npz
+    python3 -m examples.train_race --init-from ppo.npz --out race.npz
     python3 -m examples.train_race --eval race.npz --races 20
 """
 
@@ -33,8 +37,11 @@ from neoracer_mujoco.track_generation import shortest_loop_distance
 
 from examples.train_ppo import (
     Exact,
+    Fresh,
+    Init,
     Outcome,
     PPOParams,
+    Resume,
     Trained,
     greedy_action,
     load_policy,
@@ -177,6 +184,9 @@ def main() -> None:
         "--offset", type=float, default=1.0, help="the opponent's head start (m)"
     )
     parser.add_argument("--out", help="save the trained policy to this .npz file")
+    parser.add_argument(
+        "--init-from", metavar="PATH", help="train on from a saved policy"
+    )
     parser.add_argument("--eval", metavar="PATH", help="evaluate a saved policy")
     parser.add_argument("--races", type=int, default=20, help="evaluation races")
     parser.add_argument("--eval-seed", type=int, default=10_000)
@@ -196,11 +206,22 @@ def main() -> None:
     print(f"[train_race] {params}")
     print(
         f"[train_race] total_steps={args.total_steps} seed={args.seed} "
-        f"races={args.num_envs} opponent={args.opponent} offset={args.offset}"
+        f"races={args.num_envs} opponent={args.opponent} offset={args.offset} "
+        f"init_from={args.init_from}"
     )
     backend = Cpu(nthread=min(args.nthread, args.num_envs))
+    init: Init = (
+        Fresh() if args.init_from is None else Resume(*load_policy(args.init_from))
+    )
     net, stats = train(
-        params, args.total_steps, args.seed, args.num_envs, backend, config, Exact()
+        params,
+        args.total_steps,
+        args.seed,
+        args.num_envs,
+        backend,
+        config,
+        Exact(),
+        init,
     )
     if args.out is not None:
         save_policy(args.out, net, stats)

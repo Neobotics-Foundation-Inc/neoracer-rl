@@ -38,6 +38,7 @@ from examples.train_ppo import (
     ACTION_DIM,
     ActorCritic,
     EpisodeResult,
+    Fresh,
     ObsStats,
     PPOParams,
     add_track_arguments,
@@ -334,6 +335,7 @@ def main() -> None:
         Cpu(nthread=min(args.nthread, args.num_envs)),
         RaceConfig(config, (Racer(),)),
         RacecarCore(sensing_params),
+        Fresh(),
     )
     if args.out is not None:
         save_policy(args.out, net, stats, params, config)

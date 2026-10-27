@@ -19,6 +19,7 @@ from examples.train_ppo import (
     Dense,
     EpisodeResult,
     Exact,
+    Fresh,
     LogLine,
     LossInfo,
     ObsStats,
@@ -240,7 +241,7 @@ def test_training_takes_the_size_of_the_env_observation():
     params = PPOParams(rollout_steps=16, minibatches=1, hidden=(8,))
     config = NeoRacerEnvConfig(observe=_three_numbers)
     race = RaceConfig(config, (Racer(),))
-    net, stats = train(params, 32, 0, 2, Cpu(nthread=0), race, Exact())
+    net, stats = train(params, 32, 0, 2, Cpu(nthread=0), race, Exact(), Fresh())
     assert net.actor[0].weight.shape[0] == net.critic[0].weight.shape[0] == 3
     assert stats.mean.shape == (3,) and stats.count == 32
 
@@ -250,7 +251,7 @@ def test_training_takes_the_size_of_the_agents_action():
     4 actions over their 40 numbers side by side."""
     params = PPOParams(rollout_steps=16, minibatches=1, hidden=(8,))
     race = RaceConfig(cars=(Racer(), Racer(offset=(1.0, 0.0))), agents=Joint())
-    net, stats = train(params, 32, 0, 2, Cpu(nthread=0), race, Exact())
+    net, stats = train(params, 32, 0, 2, Cpu(nthread=0), race, Exact(), Fresh())
     assert net.actor[0].weight.shape[0] == 2 * OBS_DIM
     assert net.actor[-1].weight.shape[1] == net.log_std.shape[0] == 4
     assert stats.count == 32

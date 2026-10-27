@@ -22,12 +22,18 @@ from gymnasium.utils.env_checker import check_env
 from neoracer_mujoco import assets, export, sim
 from neoracer_mujoco.physics import PhysicsRanges, Range
 from neoracer_mujoco.racecar import neoracer_params
-from neoracer_mujoco.track_generation import Track
+from neoracer_mujoco.sim import SpawnRange
+from neoracer_mujoco.track_generation import (
+    Track,
+    generate_track,
+    settings_for_difficulty,
+    shortest_loop_distance,
+)
 from neoracer_mujoco.track_generation.mjcf import to_start_frame
 from neoracer_spec.neoracer import NEORACER
 
 from neoracer_rl.envs import GeneratedTracks, LapEnds, NeoRacerEnv, NeoRacerEnvConfig
-from neoracer_rl.envs.neoracer_env import arenas, lap_angle
+from neoracer_rl.envs.neoracer_env import arenas, arenas_of, lap_angle
 
 LAP = 2.0 * np.pi
 """One full lap of progress (rad)."""
@@ -373,6 +379,62 @@ def test_lap_angle_follows_the_centerline_of_a_generated_track():
         assert lap_angle(arena, arena.scene.car, data.sensordata) == pytest.approx(
             expected
         )
+
+
+def test_each_car_of_a_grid_stands_at_its_offset_along_the_track():
+    """On a generated track, each car of a grid stands as far along the
+    centerline from the start as its offset says, and as far across it."""
+    offsets = [(0.0, 0.275), (0.0, -0.275), (-1.2, 0.275), (-1.2, -0.275)]
+    tracks = GeneratedTracks(difficulty=2, count=3)
+    config = NeoRacerEnvConfig(tracks=tracks, spawn=SpawnRange(lateral=0.02, yaw=0.1))
+    for arena in arenas_of(config, offsets, False):
+        track = arena.layout
+        assert isinstance(track, Track)
+        data = mujoco.MjData(arena.scene.model)
+        mujoco.mj_forward(arena.scene.model, data)
+        spacing = track.total_length / len(track.center)
+        center = to_start_frame(track, track.center)
+        for (along, across), car in zip(offsets, arena.scene.cars, strict=True):
+            with case((track.seed, along, across)):
+                angle = lap_angle(arena, car, data.sensordata)
+                gone = angle * track.total_length / (2.0 * np.pi)
+                off = shortest_loop_distance(gone - along, track.total_length)
+                assert abs(off) <= spacing
+                xy = data.bind_scalar(car.truth.pos).data[:2]
+                gap = np.linalg.norm(center - xy, axis=1).min()
+                assert gap == pytest.approx(abs(across), abs=spacing)
+
+
+def test_a_pool_leaves_out_the_tracks_without_room_for_its_cars():
+    """Every track of a pool has room for its cars at the start: no spawn
+    can put one against a wall. One car has room on every gentle track, so
+    its pool holds the first seeds that give a track; a grid of four on
+    tight tracks has a pool of other seeds."""
+    one = GeneratedTracks(difficulty=1, count=4)
+    seeds = [
+        s
+        for s in range(16)
+        if isinstance(generate_track(s, settings_for_difficulty(1)), Track)
+    ]
+    pool = arenas(NeoRacerEnvConfig(tracks=one), False)
+    layouts = [arena.layout for arena in pool]
+    assert [t.seed for t in layouts if isinstance(t, Track)] == seeds[:4]
+    spawn = SpawnRange(lateral=0.02, yaw=0.1)
+    grid = [(0.0, 0.275), (0.0, -0.275), (-1.2, 0.275), (-1.2, -0.275)]
+    for difficulty in (1, 3):
+        config = NeoRacerEnvConfig(
+            tracks=GeneratedTracks(difficulty, count=4), spawn=spawn
+        )
+        for arena in arenas_of(config, grid, False):
+            with case(difficulty):
+                assert sim.spawn_clears_walls(arena.scene, spawn)
+
+
+def test_a_car_that_a_spawn_can_put_against_the_loops_wall_is_refused():
+    """loop_corridor's start does not move, so a car that a spawn could put
+    against its wall is refused."""
+    with pytest.raises(ValueError, match="loop_corridor"):
+        arenas_of(NeoRacerEnvConfig(), [(0.0, 0.4)], False)
 
 
 def test_a_pool_gives_episodes_on_several_tracks():

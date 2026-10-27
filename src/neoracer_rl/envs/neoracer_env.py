@@ -90,6 +90,7 @@ Termination (terminated=True) vs. truncation (truncated=True):
 
 import copy
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, TypedDict, assert_never
 
@@ -241,9 +242,18 @@ class Arena:
 def arenas(config: NeoRacerEnvConfig, visuals: bool) -> tuple[Arena, ...]:
     """The tracks of config.tracks, with the car of config. Raise ValueError
     if the seeds give too few generated tracks."""
+    return arenas_of(config, (assets.Entry("", car=config.car_path),), visuals)
+
+
+def arenas_of(
+    config: NeoRacerEnvConfig, entries: Sequence[assets.Entry], visuals: bool
+) -> tuple[Arena, ...]:
+    """The tracks of config.tracks, with the cars of entries
+    (assets.compose_cars), as arenas gives them with one car."""
     match config.tracks:
         case LoopCorridor() as loop:
-            return (Arena(loop_scene(config, visuals), loop),)
+            spec = mujoco.MjSpec.from_file(_TRACK)
+            return (Arena(assets.compose_cars(spec, entries, visuals), loop),)
         case GeneratedTracks(difficulty=difficulty, count=count, first_seed=first):
             settings = settings_for_difficulty(difficulty)
             walls = WallParams(boxes_per_wall=WALL_BOXES)
@@ -252,7 +262,7 @@ def arenas(config: NeoRacerEnvConfig, visuals: bool) -> tuple[Arena, ...]:
                 match generate_track(seed, settings):
                     case Track() as track:
                         spec = to_spec(track, walls)
-                        scene = assets.compose(spec, config.car_path, visuals=visuals)
+                        scene = assets.compose_cars(spec, entries, visuals)
                         pool.append(Arena(scene, track))
                     case NoValidTrack():
                         pass
@@ -268,10 +278,12 @@ def arenas(config: NeoRacerEnvConfig, visuals: bool) -> tuple[Arena, ...]:
             assert_never(other)
 
 
-def lap_angle(arena: Arena, sensordata: SensorData) -> npt.NDArray[np.float64]:
-    """How far around the track the car in sensordata (..., nsensordata) is,
-    as an angle (rad), shape (...,). One lap is 2 pi."""
-    model, car = arena.scene.model, arena.scene.car
+def lap_angle(
+    arena: Arena, car: Car, sensordata: SensorData
+) -> npt.NDArray[np.float64]:
+    """How far around the track car, a car of the arena, is in sensordata
+    (..., nsensordata), as an angle (rad), shape (...,). One lap is 2 pi."""
+    model = arena.scene.model
     match arena.layout:
         case LoopCorridor():
             return angle_around_center(model, car, sensordata)
@@ -374,7 +386,7 @@ class NeoRacerEnv(gym.Env):
                 self.observation_space = observe.space()
             case observe:
                 start = sim.settle(self.scene.model)
-                angle = lap_angle(self._arena, start.sensordata[None])
+                angle = lap_angle(self._arena, self._car, start.sensordata[None])
                 step = first_step(
                     self.model,
                     self._car,
@@ -390,7 +402,7 @@ class NeoRacerEnv(gym.Env):
     # --- internal helpers -----------------------------------------------
 
     def _lap_angle(self) -> float:
-        return float(lap_angle(self._arena, self.data.sensordata))
+        return float(lap_angle(self._arena, self._car, self.data.sensordata))
 
     def _drive_angle(self) -> float:
         """The drivetrain's angle (rad) now, at the last step's end."""

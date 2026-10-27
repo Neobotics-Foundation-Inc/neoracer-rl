@@ -8,10 +8,13 @@ extend-exclude = ["users"]
 # remove this section.
 [lint.flake8-bugbear]
 extend-immutable-calls = [
+  "neoracer_mujoco.control.track_centering.TrackCenteringConfig",
+  "neoracer_mujoco.control.wall_following.WallFollowingConfig",
   "neoracer_mujoco.physics.PhysicsRanges",
   "neoracer_mujoco.physics.Range",
   "neoracer_mujoco.sim.SpawnRange",
   "neoracer_rl.envs.neoracer_env.NeoRacerEnvConfig",
+  "neoracer_rl.envs.race.RaceConfig",
   "neoracer_rl.envs.task.CarObservation",
   "neoracer_rl.envs.task.LapEnds",
   "neoracer_rl.envs.task.ProgressReward",

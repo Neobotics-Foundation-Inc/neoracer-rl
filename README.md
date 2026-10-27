@@ -108,7 +108,7 @@ class Arena:
     """What lap_angle measures progress on."""
 ```
 
-`lap_angle(arena, sensordata)` computes progress from the layout:
+`lap_angle(arena, car, sensordata)` computes a car's progress from the layout:
 - **On `loop_corridor`**, it is the car's angle around the center of the loop.
 - **On a generated `Track`**, it is the distance along the centerline, scaled so that a lap is 2π.
 
@@ -135,6 +135,35 @@ When a row's episode ends, the row starts over in the same step. `out.obs` is th
 
 The batch uses the env's `lap_angle` and the config's `observe`, `terminate` and `reward`. On the `Cpu` backend, a row's first episode steps exactly like `NeoRacerEnv` from the same spawn, bit for bit. The rows' speed loops tick together, so a row that starts over keeps the batch's ticks, while `NeoRacerEnv.reset` starts its own over. `Warp()` runs the rows on a CUDA GPU with MuJoCo Warp, all on one track.
 
+## Racing other cars
+
+A race puts several cars on one track. Each car has a driver: `Learner()`, the policy in training; `TrackCentering()` or `WallFollowing()`, the controllers of `neoracer_mujoco.control`; or `Policy(act)`, a policy of its own, such as a frozen copy of an earlier one. `NeoRacerRace` steps `nrace` races at once, as `NeoRacerBatch` steps episodes:
+
+```python
+from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerRace
+from neoracer_rl.envs.race import Racer, RaceConfig, TrackCentering
+
+# The policy in training, and a controller 1 m ahead of it.
+config = RaceConfig(cars=(Racer(), Racer(TrackCentering(), offset=(1.0, 0.0))))
+env = NeoRacerRace(Cpu(nthread=4), nrace=32, config=config)
+state = env.reset(rng)
+state, out = env.step(state, rng.uniform(-1, 1, (env.nbatch, env.action_dim)))
+out.laps  # (32, 2): how far every car has gone, in laps
+```
+
+Each learner observes, ends and earns with `config.env`'s `observe`, `terminate` and `reward`, called with its own `Step`. `step.rivals` holds the other cars: each one's `car`, whose sensors and truth a function can read, its `progress`, how far `ahead` of the learner it is, and whether it touched the learner in the step. A reward for gaining on the first of them:
+
+```python
+def reward(step, ends):
+    rival = step.rivals[0]
+    gain = step.progress.delta - rival.progress.delta
+    return ProgressReward()(step, ends) + 0.5 * gain
+```
+
+`config.agents` says who the agents are. With `Each()`, the default, every learner is an agent, a row of the arrays, and one policy drives them all, each from its own observation. With `Joint()`, the learners of a race are one agent, which sees their observations side by side, gives their actions side by side, two numbers each, and earns the sum of their rewards.
+
+A race ends for every car when a learner meets an end, or at `max_episode_steps`. The other learners are truncated, and the race starts over from its spawn. The cars that a controller or a `Policy` drives have no ends of their own. `NeoRacerBatch` is the race of one learner, so a race steps its cars as the batch steps its one car.
+
 ## Training a policy
 
 `examples/train_ppo.py` is a small PPO baseline in JAX and optax. The policy is a Gaussian over speed and steering, with an MLP for the mean.
@@ -152,7 +181,7 @@ python -m examples.train_ppo --eval ppo.npz --episodes 20
 
 - `src/neoracer_rl/envs/task.py` has the task: `Step`, the progress of a batch of rows, and the default observation, ends and reward.
 - `src/neoracer_rl/envs/neoracer_env.py` has `NeoRacerEnv`, its config, and the tracks with how progress is measured on them.
-- `src/neoracer_rl/envs/neoracer_batch.py` has `NeoRacerBatch` and the array versions of those functions.
+- `src/neoracer_rl/envs/race.py` has the drivers, the agents and `RaceConfig`, and `src/neoracer_rl/envs/neoracer_batch.py` has `NeoRacerRace`, which steps races, and `NeoRacerBatch`, the race of one learner.
 - A new part of the task, such as another reward term, is a function of a `Step` in `task.py`, which both the env and the batch then use. Physics and sensors belong in neoracer-mujoco.
 - `examples/` has `train_ppo.py`; `experiments.py`, which trains and evaluates every run of EXPERIMENTS.md and prints its tables; `random_actions.py`, which checks that the environment works; and the RACECAR Neo V2's policy: `train_v2.py`, `drive_v2.py` and `racecar_neo_v2/`.
 - `validation/` has the tests, and `users/<github-name>/` personal experiments.

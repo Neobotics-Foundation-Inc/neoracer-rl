@@ -370,7 +370,9 @@ def test_lap_angle_follows_the_centerline_of_a_generated_track():
         data.bind_scalar(scene.car.joint).qpos[:2] = center[i]
         mujoco.mj_forward(scene.model, data)
         expected = 2.0 * np.pi * track.distance_along[i] / track.total_length
-        assert lap_angle(arena, data.sensordata) == pytest.approx(expected)
+        assert lap_angle(arena, arena.scene.car, data.sensordata) == pytest.approx(
+            expected
+        )
 
 
 def test_a_pool_gives_episodes_on_several_tracks():

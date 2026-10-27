@@ -87,8 +87,9 @@ def test_a_row_whose_episode_ends_starts_over_from_its_spawn():
     sim_batch.close()
     assert _reason(out, 0) == "crash" and not out.done[1]
     np.testing.assert_array_equal(state.obs[0], start.obs[0])
-    assert state.progress.steps[0] == 0 and state.progress.total[0] == 0.0
-    assert state.progress.steps[1] > 0
+    (progress,) = state.progress
+    assert progress.steps[0] == 0 and progress.total[0] == 0.0
+    assert progress.steps[1] > 0
     np.testing.assert_array_equal(state.obs[1], out.obs[1])
 
 
@@ -110,7 +111,7 @@ def test_respawn_changes_only_where_rows_start_over():
     sim_batch.close()
     assert not out.done[1]
     np.testing.assert_array_equal(state.obs[0], state.spawn_obs[0])
-    assert state.progress.angle[0] == state.spawn_angle[0]
+    assert state.progress[0].angle[0] == state.spawn_angle[0, 0]
 
 
 def test_the_warp_backend_follows_the_cpu_backend():
@@ -170,7 +171,7 @@ def test_a_row_that_starts_over_switches_track_physics_and_progress_together():
     assert state.track[0] == state.spawn_track[0]
     assert state.sim.models[0] is state.spawn.models[0]
     np.testing.assert_array_equal(state.obs[0], state.spawn_obs[0])
-    assert state.progress.angle[0] == state.spawn_angle[0]
+    assert state.progress[0].angle[0] == state.spawn_angle[0, 0]
 
     env = NeoRacerEnv(config)
     obs, _ = env.reset(seed=seed)

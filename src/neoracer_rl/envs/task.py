@@ -107,6 +107,28 @@ def restart_rows(p: ProgressRows, done: Mask, angle: Rows) -> ProgressRows:
     )
 
 
+def lead(own: ProgressRows, other: ProgressRows) -> Rows:
+    """How far ahead of own other is, as progress (rad): the gap between
+    their starts, the short way around the track, plus other's progress less
+    own's. Below 0 where own is ahead."""
+    starts = (other.angle - other.total) - (own.angle - own.total)
+    return shortest_loop_distance(starts, 2.0 * np.pi) + other.total - own.total
+
+
+@dataclass(frozen=True)
+class Rival:
+    """Another car of a race (race.py), as the Step of one of its cars sees
+    it."""
+
+    car: Car
+    progress: ProgressRows
+    """How far around the track it has gone, as the Step's own progress."""
+    ahead: Rows
+    """How far ahead of the Step's car it is (lead)."""
+    contact: Mask
+    """It touched the Step's car during the step."""
+
+
 @dataclass(frozen=True)
 class Step:
     """What the env knows after a step, or at the start of an episode, for
@@ -124,6 +146,8 @@ class Step:
     action: npt.NDArray[np.float32]
     """The action of the step, speed and steer in [-1, 1], shape (rows, 2):
     zeros at the start of an episode."""
+    rivals: tuple[Rival, ...] = ()
+    """The other cars of a race, in the race's order: none for a car alone."""
 
     def read(self, sensor: mujoco.MjsSensor) -> npt.NDArray[np.float64]:
         """The reading of sensor in every row, shape (rows, dim)."""
@@ -208,19 +232,12 @@ class CarObservation:
         def read(*sensors: mujoco.MjsSensor) -> SensorData:
             return np.concatenate([step.read(x) for x in sensors], -1)
 
-        beams = (
-            s.lidar_000,
-            s.lidar_045,
-            s.lidar_090,
-            s.lidar_135,
-            s.lidar_180,
-            s.lidar_225,
-            s.lidar_270,
-            s.lidar_315,
-        )
+        order = sensors.LIDAR_BEAM_ORDER
         # A beam that the car blocks reads no return, as sensors.read gives it.
-        blocked = np.array([beam.name in s.blocked for beam in beams])
-        lidar = np.where(blocked, sensors.NO_RETURN, read(*beams))
+        blocked = np.array([name in s.blocked for name in order])
+        lidar = np.where(
+            blocked, sensors.NO_RETURN, read(*(getattr(s, n) for n in order))
+        )
         imu = read(s.imu_accel, s.imu_gyro, s.imu_quat, s.steer_cmd_pos)
         parts = (lidar, imu, encoder_speed(step)[..., None])
         return np.concatenate([p.astype(np.float32) for p in parts], -1)

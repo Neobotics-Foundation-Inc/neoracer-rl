@@ -38,6 +38,7 @@ from examples.train_ppo import (
     ACTION_DIM,
     ActorCritic,
     EpisodeResult,
+    Fresh,
     ObsStats,
     PPOParams,
     add_track_arguments,
@@ -48,6 +49,7 @@ from examples.train_ppo import (
 )
 from neoracer_rl.envs import NeoRacerEnvConfig, task
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
+from neoracer_rl.envs.race import RaceConfig, Racer
 
 CONFIG = NeoRacerEnvConfig(
     car_path=os.path.join(assets.ASSET_DIR, "racecar_neo_v2.xml"),
@@ -331,8 +333,9 @@ def main() -> None:
         args.seed,
         args.num_envs,
         Cpu(nthread=min(args.nthread, args.num_envs)),
-        config,
+        RaceConfig(config, (Racer(),)),
         RacecarCore(sensing_params),
+        Fresh(),
     )
     if args.out is not None:
         save_policy(args.out, net, stats, params, config)

@@ -1,7 +1,8 @@
 """
-Laws for neoracer_rl.envs.task: the progress of a batch of rows, first_end,
-which picks each row's end, the ends and the reward of the lap task, and an
-env's use of its observe, terminate and reward.
+Laws for neoracer_rl.envs.task: the progress of a batch of rows, a car's
+lead on another, first_end, which picks each row's end, the ends and the
+reward of the lap task, and an env's use of its observe, terminate and
+reward.
 """
 
 import numpy as np
@@ -28,6 +29,7 @@ from neoracer_rl.envs.task import (
     Rows,
     advance_rows,
     first_end,
+    lead,
     restart_rows,
     start_rows,
 )
@@ -74,6 +76,27 @@ def test_the_total_is_the_true_progress():
     for true_angle in start + np.cumsum(steps, axis=0):
         p = advance_rows(p, _wrap(true_angle))
     np.testing.assert_allclose(p.total, steps.sum(axis=0), atol=1e-9)
+
+
+def test_lead_is_the_start_gap_plus_the_progress_between():
+    """Two cars start less than half a lap apart, each angle wrapping on its
+    own, and drive many laps either way, in steps of less than half a turn.
+    lead is then the gap between their starts plus the other's progress less
+    one's own, laps and all, and each car's lead on the other is the
+    negative of the other's."""
+    rng = np.random.default_rng(3)
+    rows = 50
+    start = rng.uniform(-np.pi, np.pi, rows)
+    gap = rng.uniform(-0.9 * np.pi, 0.9 * np.pi, rows)
+    steps = rng.uniform(-0.3 * np.pi, 0.9 * np.pi, (2, 60, rows))  # rad per step
+    own, other = start_rows(_wrap(start), 7), start_rows(_wrap(start + gap), 7)
+    for a, b in zip(*np.cumsum(steps, axis=1), strict=True):
+        own = advance_rows(own, _wrap(start + a))
+        other = advance_rows(other, _wrap(start + gap + b))
+    expected = gap + other.total - own.total
+    assert np.abs(other.total - own.total).max() > 2 * LAP
+    np.testing.assert_allclose(lead(own, other), expected, atol=1e-9)
+    np.testing.assert_allclose(lead(other, own), -expected, atol=1e-9)
 
 
 def test_recent_is_the_progress_over_the_window():

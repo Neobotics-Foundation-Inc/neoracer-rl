@@ -19,10 +19,12 @@ from examples.train_ppo import (
     Dense,
     EpisodeResult,
     Exact,
+    Fresh,
     LogLine,
     LossInfo,
     ObsStats,
     PPOParams,
+    Resume,
     RolloutState,
     UpdateLog,
     add_track_arguments,
@@ -52,6 +54,7 @@ from neoracer_rl.envs import (
 )
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
 from neoracer_rl.envs.neoracer_env import Tracks
+from neoracer_rl.envs.race import Joint, RaceConfig, Racer
 from neoracer_rl.envs.task import OBS_DIM, Observations
 
 
@@ -238,9 +241,42 @@ def test_training_takes_the_size_of_the_env_observation():
     with statistics of 3."""
     params = PPOParams(rollout_steps=16, minibatches=1, hidden=(8,))
     config = NeoRacerEnvConfig(observe=_three_numbers)
-    net, stats = train(params, 32, 0, 2, Cpu(nthread=0), config, Exact())
+    race = RaceConfig(config, (Racer(),))
+    net, stats = train(params, 32, 0, 2, Cpu(nthread=0), race, Exact(), Fresh())
     assert net.actor[0].weight.shape[0] == net.critic[0].weight.shape[0] == 3
     assert stats.mean.shape == (3,) and stats.count == 32
+
+
+def test_training_takes_the_size_of_the_agents_action():
+    """A race whose two learners are one Joint agent trains a policy of their
+    4 actions over their 40 numbers side by side."""
+    params = PPOParams(rollout_steps=16, minibatches=1, hidden=(8,))
+    race = RaceConfig(cars=(Racer(), Racer(offset=(1.0, 0.0))), agents=Joint())
+    net, stats = train(params, 32, 0, 2, Cpu(nthread=0), race, Exact(), Fresh())
+    assert net.actor[0].weight.shape[0] == 2 * OBS_DIM
+    assert net.actor[-1].weight.shape[1] == net.log_std.shape[0] == 4
+    assert stats.count == 32
+
+
+def test_training_resumes_a_saved_policy_and_what_it_saw():
+    """Resumed for no steps, training gives back the network and statistics
+    it was given. Resumed for an update, it goes on from them: the network
+    has the saved one's sizes and the statistics count on from the saved
+    count."""
+    params = PPOParams(rollout_steps=16, minibatches=1, hidden=(8,))
+    race = RaceConfig(cars=(Racer(),))
+    saved = train(params, 32, 0, 2, Cpu(nthread=0), race, Exact(), Fresh())
+    same = train(params, 0, 1, 2, Cpu(nthread=0), race, Exact(), Resume(*saved))
+    for a, b in zip(jax.tree.leaves(same), jax.tree.leaves(saved), strict=True):
+        np.testing.assert_array_equal(a, b)
+    net, stats = train(params, 32, 1, 2, Cpu(nthread=0), race, Exact(), Resume(*saved))
+    assert stats.count == saved[1].count + 32
+    for a, b in zip(jax.tree.leaves(net), jax.tree.leaves(saved[0]), strict=True):
+        assert a.shape == b.shape
+    assert any(
+        not np.array_equal(a, b)
+        for a, b in zip(jax.tree.leaves(net), jax.tree.leaves(saved[0]), strict=True)
+    )
 
 
 def test_truncation_bootstraps_from_the_last_observation_of_the_episode():
@@ -304,14 +340,20 @@ def test_parse_log_reads_back_what_format_log_writes():
     """parse_log gives the env steps, the speed, the episodes and the laps of
     a line that format_log wrote, whether or not episodes ended in the
     update, and the rest of the line, the same at any speed; and None for
-    any other line."""
+    any other line. An end that the lap task does not have, such as a race's
+    touch, is counted after the truncations."""
     loss = LossInfo(*(jnp.float32(0.0),) * 5)
     episodes = (
         EpisodeResult(16.3, 1.0, "lap_complete", 900),
         EpisodeResult(-5.7, -0.1, "crash", 40),
         EpisodeResult(10.1, 1.0, "lap_complete", 950),
     )
-    for name, ended, laps in (("no episode", (), 0), ("three", episodes, 2)):
+    touch = (*episodes, EpisodeResult(-4.0, 0.1, "touch", 60))
+    for name, ended, laps in (
+        ("no episode", (), 0),
+        ("three", episodes, 2),
+        ("a touch", touch, 2),
+    ):
         with case(name):
             log = UpdateLog(7, 14336, ended, loss, (0.9, 1.1))
             fast, slow = (
@@ -320,4 +362,7 @@ def test_parse_log_reads_back_what_format_log_writes():
             )
             assert slow is not None
             assert fast == LogLine(14336, 1234, len(ended), laps, slow.seeded)
+    assert "trunc  0 touch  1  pi" in format_log(
+        UpdateLog(7, 0, touch, loss, (1.0,)), 1.0
+    )
     assert parse_log("[train_ppo] saved the policy to ppo.npz") is None

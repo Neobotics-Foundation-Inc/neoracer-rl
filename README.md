@@ -175,6 +175,15 @@ python -m examples.train_ppo --eval ppo.npz --episodes 20
 
 `--random-physics` trains with random physics, `--tracks generated` on generated tracks, and `--backend warp` on a GPU. [EXPERIMENTS.md](EXPERIMENTS.md) has the results. For example, three of five seeds trained on `loop_corridor` alone learn to lap it, seed 1, above, among them, and one of the three laps 18 of 20 episodes on generated tracks it never saw.
 
+`examples/train_race.py` trains a policy to race a car that `TrackCentering` drives, 1 m ahead of it at the start, with the same PPO, and evaluates a policy in such races:
+
+```sh
+python -m examples.train_race --total-steps 400000 --seed 1 --out race.npz
+python -m examples.train_race --eval race.npz --races 20
+```
+
+Touching the other car ends the race as a crash does. In [EXPERIMENTS.md](EXPERIMENTS.md#racing-a-controller), policies that lap alone learn in races to follow the car ahead and lap behind it, but none passes it. `train` takes a `RaceConfig`, and the policy has as many actions as the env's agent, so a `Joint` agent of several learners trains with the same code.
+
 `examples/train_v2.py` trains a policy for another car, MIT's RACECAR Neo V2, on what that car's `racecar_core` library shows a program: a LiDAR scan up to two turns of its head old, and its encoder's speed. [examples/racecar_neo_v2](examples/racecar_neo_v2/README.md) holds the program that drives the real car with it.
 
 ## Where the code lives
@@ -183,7 +192,7 @@ python -m examples.train_ppo --eval ppo.npz --episodes 20
 - `src/neoracer_rl/envs/neoracer_env.py` has `NeoRacerEnv`, its config, and the tracks with how progress is measured on them.
 - `src/neoracer_rl/envs/race.py` has the drivers, the agents and `RaceConfig`, and `src/neoracer_rl/envs/neoracer_batch.py` has `NeoRacerRace`, which steps races, and `NeoRacerBatch`, the race of one learner.
 - A new part of the task, such as another reward term, is a function of a `Step` in `task.py`, which both the env and the batch then use. Physics and sensors belong in neoracer-mujoco.
-- `examples/` has `train_ppo.py`; `experiments.py`, which trains and evaluates every run of EXPERIMENTS.md and prints its tables; `random_actions.py`, which checks that the environment works; and the RACECAR Neo V2's policy: `train_v2.py`, `drive_v2.py` and `racecar_neo_v2/`.
+- `examples/` has `train_ppo.py`; `train_race.py`, which trains and evaluates a policy in races; `experiments.py`, which trains and evaluates every run of EXPERIMENTS.md and prints its tables; `random_actions.py`, which checks that the environment works; and the RACECAR Neo V2's policy: `train_v2.py`, `drive_v2.py` and `racecar_neo_v2/`.
 - `validation/` has the tests, and `users/<github-name>/` personal experiments.
 
 ## Setup

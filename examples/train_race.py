@@ -57,6 +57,7 @@ from neoracer_rl.envs import (
     WallFollowing,
 )
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerRace
+from neoracer_rl.envs.neoracer_env import substeps_per_action
 from neoracer_rl.envs.task import Ends, LapEnds, ProgressReward, Rows, Step
 
 
@@ -115,6 +116,8 @@ class RaceResult:
     """The laps of the learner and of the opponent."""
     lead: float
     """How far ahead of the opponent the learner finished, in laps."""
+    seconds: float
+    """The time the race took."""
 
 
 def evaluate_races(
@@ -123,16 +126,20 @@ def evaluate_races(
     """The first episode of each of races, from the spawns of
     default_rng(seed), with the policy's mean action."""
     env = NeoRacerRace(Cpu(nthread=min(nthread, races)), races, config)
+    model = env.scene.model
+    period = substeps_per_action(config.env, model) * float(model.opt.timestep)
     state = env.reset(np.random.default_rng(seed))
     head_start = state.spawn_angle[:, 1] - state.spawn_angle[:, 0]
     gap = shortest_loop_distance(head_start, 2.0 * np.pi) / (2.0 * np.pi)
     results: dict[int, RaceResult] = {}
+    steps = 0
     while len(results) < races:
         obs = normalize_obs(
             policy.stats, state.obs.astype(np.float64), policy.params.obs_clip
         )
         action = np.asarray(greedy_action(policy.net, jnp.asarray(obs)))
         state, out = env.step(state, action)
+        steps += 1
         for r in np.flatnonzero(out.done):
             if r in results:
                 continue
@@ -142,6 +149,7 @@ def evaluate_races(
                 out.ends[code - 1] if code else "truncated",
                 (mine, theirs),
                 mine - theirs - float(gap[r]),
+                steps * period,
             )
     env.close()
     return [results[r] for r in range(races)]
@@ -151,12 +159,14 @@ def print_races(name: str, results: list[RaceResult], seed: int) -> None:
     print(f"[eval] {name}: {len(results)} races from default_rng({seed})")
     for k, r in enumerate(results):
         print(
-            f"  race {k:3d}  laps {r.laps[0]:+.3f} vs {r.laps[1]:+.3f}  "
-            f"lead {r.lead:+.3f}  outcome {r.outcome}"
+            f"  race {k:3d}  {r.seconds:5.1f} s  laps {r.laps[0]:+.3f} vs "
+            f"{r.laps[1]:+.3f}  lead {r.lead:+.3f}  outcome {r.outcome}"
         )
     ahead = sum(r.lead > 0 for r in results)
+    laps = [r.seconds for r in results if r.outcome == "lap_complete"]
+    lap_time = f"{np.mean(laps):.1f} s" if laps else "none"
     print(
-        f"  ahead at the end {ahead}/{len(results)}  "
+        f"  ahead at the end {ahead}/{len(results)}  mean lap {lap_time}  "
         f"outcomes {dict(Counter(r.outcome for r in results))}"
     )
 

@@ -1,6 +1,6 @@
 """
-Train a PPO policy on NeoRacerBatch, or evaluate a saved policy on
-NeoRacerEnv.
+Train a PPO policy on NeoRacerBatch, or on races of NeoRacerRace, or
+evaluate a saved policy on NeoRacerEnv.
 
 PPO (proximal policy optimization) is a policy-gradient method.
 It collects a batch of steps with the current policy, then makes a few
@@ -14,8 +14,10 @@ A second MLP (the critic) estimates the value of an observation.
 
 Training steps every environment at once with NeoRacerBatch, on the backend
 that --backend names: cpu (mujoco.rollout on CPU threads) or warp (MuJoCo
-Warp, for a CUDA GPU; it needs the warp extra). Evaluation runs the
-Gymnasium env NeoRacerEnv, one episode at a time.
+Warp, for a CUDA GPU; it needs the warp extra). train takes a RaceConfig, so
+the same code trains a policy in races (examples/train_race.py), its action
+as many numbers as the env's agent has. Evaluation runs the Gymnasium env
+NeoRacerEnv, one episode at a time.
 
 The script normalizes each observation with a running mean and variance,
 because the LiDAR value -1 (no hit) and the large IMU ranges otherwise
@@ -59,15 +61,17 @@ from neoracer_rl.envs.neoracer_batch import (
     Backend,
     BatchState,
     Cpu,
-    NeoRacerBatch,
+    NeoRacerRace,
     StepResult,
     Warp,
 )
 from neoracer_rl.envs.neoracer_env import EnvInfo, Tracks
+from neoracer_rl.envs.race import RaceConfig, Racer
 from neoracer_rl.envs.task import OBS_DIM
 
 ACTION_DIM = 2
-"""(speed, steer), as neoracer_env.py gives them."""
+"""(speed, steer), as neoracer_env.py gives them: the action of NeoRacerEnv,
+and of a learner of a race."""
 
 RANDOM_PHYSICS = PhysicsRanges(
     wheel_friction=Range(0.3, 1.2),
@@ -155,7 +159,7 @@ class ActorCritic:
     critic: tuple[Dense, ...]
     """obs -> value."""
     log_std: jax.Array
-    """The log standard deviation of each action, shape (ACTION_DIM,)."""
+    """The log standard deviation of each action, shape (action_dim,)."""
 
 
 def init_mlp(
@@ -174,16 +178,19 @@ def init_mlp(
     )
 
 
-@functools.partial(jax.jit, static_argnames=("params", "obs_dim"))
+@functools.partial(jax.jit, static_argnames=("params", "obs_dim", "action_dim"))
 def init_actor_critic(
-    key: jax.Array, params: PPOParams, obs_dim: int = OBS_DIM
+    key: jax.Array,
+    params: PPOParams,
+    obs_dim: int = OBS_DIM,
+    action_dim: int = ACTION_DIM,
 ) -> ActorCritic:
     actor_key, critic_key = jax.random.split(key)
     return ActorCritic(
         # A small gain makes the initial action mean close to 0.
-        actor=init_mlp(actor_key, (obs_dim, *params.hidden, ACTION_DIM), 0.01),
+        actor=init_mlp(actor_key, (obs_dim, *params.hidden, action_dim), 0.01),
         critic=init_mlp(critic_key, (obs_dim, *params.hidden, 1), 1.0),
-        log_std=jnp.full(ACTION_DIM, params.init_log_std),
+        log_std=jnp.full(action_dim, params.init_log_std),
     )
 
 
@@ -308,7 +315,7 @@ class Batch:
     obs: jax.Array
     """The normalized observation, shape (B, OBS_DIM)."""
     action: jax.Array
-    """The unclipped sampled action, shape (B, ACTION_DIM)."""
+    """The unclipped sampled action, shape (B, action_dim)."""
     log_prob: jax.Array
     """The log probability of action under the rollout policy."""
     advantage: jax.Array
@@ -430,7 +437,7 @@ def ended(
 type EnvObsBatch = npt.NDArray[np.float32]
 """The env's observations, shape (N, OBS_DIM)."""
 type ActionBatch = npt.NDArray[np.float64]
-"""Shape (N, ACTION_DIM)."""
+"""Shape (N, action_dim)."""
 type Rows = npt.NDArray[np.bool_]
 """Shape (N,)."""
 
@@ -510,7 +517,7 @@ def _outcome(info: EnvInfo) -> Outcome:
 
 
 def collect_rollout[S](
-    env: NeoRacerBatch,
+    env: NeoRacerRace,
     state: RolloutState[S],
     net: ActorCritic,
     key: jax.Array,
@@ -528,7 +535,7 @@ def collect_rollout[S](
     t_len, n = params.rollout_steps, env.nbatch
     obs_dim = interface.obs_dim(state.env.obs.shape[1])
     obs_buf = np.zeros((t_len, n, obs_dim), dtype=np.float32)
-    act_buf = np.zeros((t_len, n, ACTION_DIM), dtype=np.float32)
+    act_buf = np.zeros((t_len, n, env.action_dim), dtype=np.float32)
     logp_buf = np.zeros((t_len, n), dtype=np.float32)
     val_buf = np.zeros((t_len, n), dtype=np.float32)
     rew_buf = np.zeros((t_len, n), dtype=np.float32)
@@ -580,7 +587,7 @@ def collect_rollout[S](
     )
     batch = Batch(
         obs=jnp.asarray(obs_buf).reshape(t_len * n, obs_dim),
-        action=jnp.asarray(act_buf).reshape(t_len * n, ACTION_DIM),
+        action=jnp.asarray(act_buf).reshape(t_len * n, env.action_dim),
         log_prob=jnp.asarray(logp_buf).reshape(-1),
         advantage=advantage.reshape(-1),
         target=target.reshape(-1),
@@ -613,7 +620,7 @@ def format_log(log: UpdateLog, steps_per_s: float) -> str:
         f"trunc {reasons['truncated']:2d}  "
         f"pi {float(log.loss.policy_loss):+.4f} v {float(log.loss.value_loss):.4f} "
         f"kl {float(log.loss.approx_kl):.4f} clip {float(log.loss.clip_frac):.2f} "
-        f"std {log.action_std[0]:.2f},{log.action_std[1]:.2f}"
+        f"std {','.join(f'{s:.2f}' for s in log.action_std)}"
     )
 
 
@@ -657,28 +664,29 @@ def train[S](
     seed: int,
     num_envs: int,
     backend: Backend,
-    config: NeoRacerEnvConfig,
+    config: RaceConfig,
     interface: Interface[S],
 ) -> tuple[ActorCritic, ObsStats]:
-    """Train for at least total_steps env steps. Print one log line per update.
-    The spawns, the physics and the interface's randomness come from
-    default_rng(seed); each update draws new spawns and physics."""
+    """Train on num_envs races of config for at least total_steps agent
+    steps. Print one log line per update. The spawns, the physics and the
+    interface's randomness come from default_rng(seed); each update draws
+    new spawns and physics."""
     key = jax.random.key(seed)
     key, init_key = jax.random.split(key)
-    env = NeoRacerBatch(backend, num_envs, config)
+    env = NeoRacerRace(backend, num_envs, config)
     rng = np.random.default_rng(seed)
     env_state = env.reset(rng)
     obs_dim = interface.obs_dim(env_state.obs.shape[1])
-    net = init_actor_critic(init_key, params, obs_dim)
+    net = init_actor_critic(init_key, params, obs_dim, env.action_dim)
     opt_state = init_opt_state(net, params)
     state = RolloutState(
         env=env_state,
-        episode_return=np.zeros(num_envs),
-        episode_steps=np.zeros(num_envs, dtype=np.int64),
+        episode_return=np.zeros(env.nbatch),
+        episode_steps=np.zeros(env.nbatch, dtype=np.int64),
         stats=empty_obs_stats(obs_dim),
         carry=interface.start(env_state.obs, rng),
     )
-    steps_per_update = params.rollout_steps * num_envs
+    steps_per_update = params.rollout_steps * env.nbatch
     updates = -(-total_steps // steps_per_update)  # ceiling division
     for update in range(1, updates + 1):
         start = time.perf_counter()
@@ -963,8 +971,9 @@ def main() -> None:
             backend = Warp()
         case _:
             assert_never(kind)
+    alone = RaceConfig(config, (Racer(),))
     net, stats = train(
-        params, args.total_steps, args.seed, args.num_envs, backend, config, Exact()
+        params, args.total_steps, args.seed, args.num_envs, backend, alone, Exact()
     )
     if args.out is not None:
         save_policy(args.out, net, stats)

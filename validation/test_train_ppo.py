@@ -52,6 +52,7 @@ from neoracer_rl.envs import (
 )
 from neoracer_rl.envs.neoracer_batch import Cpu, NeoRacerBatch
 from neoracer_rl.envs.neoracer_env import Tracks
+from neoracer_rl.envs.race import Joint, RaceConfig, Racer
 from neoracer_rl.envs.task import OBS_DIM, Observations
 
 
@@ -238,9 +239,21 @@ def test_training_takes_the_size_of_the_env_observation():
     with statistics of 3."""
     params = PPOParams(rollout_steps=16, minibatches=1, hidden=(8,))
     config = NeoRacerEnvConfig(observe=_three_numbers)
-    net, stats = train(params, 32, 0, 2, Cpu(nthread=0), config, Exact())
+    race = RaceConfig(config, (Racer(),))
+    net, stats = train(params, 32, 0, 2, Cpu(nthread=0), race, Exact())
     assert net.actor[0].weight.shape[0] == net.critic[0].weight.shape[0] == 3
     assert stats.mean.shape == (3,) and stats.count == 32
+
+
+def test_training_takes_the_size_of_the_agents_action():
+    """A race whose two learners are one Joint agent trains a policy of their
+    4 actions over their 40 numbers side by side."""
+    params = PPOParams(rollout_steps=16, minibatches=1, hidden=(8,))
+    race = RaceConfig(cars=(Racer(), Racer(offset=(1.0, 0.0))), agents=Joint())
+    net, stats = train(params, 32, 0, 2, Cpu(nthread=0), race, Exact())
+    assert net.actor[0].weight.shape[0] == 2 * OBS_DIM
+    assert net.actor[-1].weight.shape[1] == net.log_std.shape[0] == 4
+    assert stats.count == 32
 
 
 def test_truncation_bootstraps_from_the_last_observation_of_the_episode():

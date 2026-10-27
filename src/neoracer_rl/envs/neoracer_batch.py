@@ -208,7 +208,7 @@ class NeoRacerRace:
         # One car keeps its names unprefixed, as NeoRacerEnv's car has them.
         prefixes = [""] if len(cars) == 1 else [f"car{k}/" for k in range(len(cars))]
         entries = [
-            assets.Entry(prefix, racer.offset, env.car_path)
+            assets.Entry(prefix, racer.offset, car=env.car_path)
             for prefix, racer in zip(prefixes, cars, strict=True)
         ]
         self._arenas = arenas_of(env, entries, visuals=False)

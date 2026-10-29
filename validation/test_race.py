@@ -18,7 +18,7 @@ from neoracer_mujoco import assets, batch, sensors
 from neoracer_mujoco.racecar import racecar_neo_v2_params
 from neoracer_mujoco.sim import SpawnRange
 
-from neoracer_rl.envs import GeneratedTracks, NeoRacerEnvConfig, Step
+from neoracer_rl.envs import GeneratedTracks, NeoRacerEnvConfig, Start, Step
 from neoracer_rl.envs.neoracer_batch import BatchState, Cpu, NeoRacerRace, Warp
 from neoracer_rl.envs.race import (
     Joint,
@@ -31,11 +31,11 @@ from neoracer_rl.envs.race import (
 )
 from neoracer_rl.envs.task import CarObservation, Observations
 
-AHEAD = Racer(Learner(), (1.0, 0.0))
+AHEAD = Racer(Learner(), Start((1.0, 0.0)))
 """A learner 1 m ahead of the track's start."""
 
 GRID = tuple(
-    Racer(offset=(-(k // 2) * 1.2, 0.275 if k % 2 else -0.275)) for k in range(4)
+    Racer(start=Start((-(k // 2) * 1.2, 0.275 if k % 2 else -0.275))) for k in range(4)
 )
 """Four learners on a grid at the track's start: rows of two, 0.55 m apart,
 1.2 m between rows."""
@@ -86,7 +86,7 @@ def test_a_policy_car_drives_as_a_learner_given_its_actions():
     """A car that a Policy drives steps as a Learner, bit for bit, when the
     learner is given the actions that the Policy would give from its
     observations."""
-    with_policy = RaceConfig(cars=(Racer(), Racer(Policy(_act), (1.0, 0.0))))
+    with_policy = RaceConfig(cars=(Racer(), Racer(Policy(_act), Start((1.0, 0.0)))))
     two_learners = RaceConfig(cars=(Racer(), AHEAD))
     (p, ps), (ll, ls) = _race(2, with_policy), _race(2, two_learners)
     np.testing.assert_array_equal(ps.obs, ls.obs[0::2])
@@ -151,7 +151,9 @@ def test_a_learners_end_ends_its_race():
     """A learner drives into the wall while the other stands still. In the
     step of its crash, the other learner is truncated, and the race starts
     over: both at their spawns, the opponent too. The other race goes on."""
-    config = RaceConfig(cars=(Racer(), AHEAD, Racer(TrackCentering(), (-1.0, 0.0))))
+    config = RaceConfig(
+        cars=(Racer(), AHEAD, Racer(TrackCentering(), Start((-1.0, 0.0))))
+    )
     env, start = _race(2, config)
     crash = np.array([1.0, 1.0], np.float32)
     action = np.stack([crash, STILL, STILL, STILL])
@@ -176,7 +178,7 @@ def test_a_controller_drives_its_car_around_the_loop():
     learner stays where it is."""
     for driver in (TrackCentering(), WallFollowing()):
         with case(driver):
-            config = RaceConfig(cars=(Racer(), Racer(driver, (1.0, 0.0))))
+            config = RaceConfig(cars=(Racer(), Racer(driver, Start((1.0, 0.0)))))
             env, state = _race(2, config)
             for _ in range(105):
                 state, out = env.step(state, np.stack([STILL, STILL]))
@@ -248,7 +250,9 @@ def test_a_race_on_warp_follows_the_race_on_the_cpu():
     extra is installed."""
     for module in ("jax", "mujoco.mjx", "mujoco_warp"):
         pytest.importorskip(module)
-    config = RaceConfig(cars=(Racer(), AHEAD, Racer(TrackCentering(), (-1.0, 0.0))))
+    config = RaceConfig(
+        cars=(Racer(), AHEAD, Racer(TrackCentering(), Start((-1.0, 0.0))))
+    )
     observations = []
     for backend in (Cpu(nthread=0), Warp()):
         env = NeoRacerRace(backend, 2, config)
@@ -297,8 +301,8 @@ def test_a_car_turned_by_pi_drives_back_around_the_lap():
     """A learner whose heading is pi faces back along the track: at full
     throttle it goes back around the lap, while the learner beside it with
     no heading goes forward."""
-    turned = Racer(offset=(0.0, 0.275), heading=np.pi)
-    racers = (Racer(offset=(0.0, -0.275)), turned)
+    turned = Racer(start=Start((0.0, 0.275), heading=np.pi))
+    racers = (Racer(start=Start((0.0, -0.275))), turned)
     tracks, spawn = GeneratedTracks(count=2), SpawnRange(lateral=0.02, yaw=0.1)
     env_config = NeoRacerEnvConfig(tracks=tracks, spawn=spawn, observe=_progress)
     config = RaceConfig(env_config, racers)

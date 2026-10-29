@@ -49,6 +49,7 @@ from neoracer_rl.envs import (
     LoopCorridor,
     NeoRacerEnvConfig,
     ProgressReward,
+    Start,
     Step,
     encoder_speed,
 )
@@ -251,7 +252,7 @@ def test_training_takes_the_size_of_the_agents_action():
     """A race whose two learners are one Joint agent trains a policy of their
     4 actions over their 40 numbers side by side."""
     params = PPOParams(rollout_steps=16, minibatches=1, hidden=(8,))
-    race = RaceConfig(cars=(Racer(), Racer(offset=(1.0, 0.0))), agents=Joint())
+    race = RaceConfig(cars=(Racer(), Racer(start=Start((1.0, 0.0)))), agents=Joint())
     net, stats = train(params, 32, 0, 2, Cpu(nthread=0), race, Exact(), Fresh())
     assert net.actor[0].weight.shape[0] == 2 * OBS_DIM
     assert net.actor[-1].weight.shape[1] == net.log_std.shape[0] == 4

@@ -14,6 +14,7 @@ extend-immutable-calls = [
   "neoracer_mujoco.physics.Range",
   "neoracer_mujoco.sim.SpawnRange",
   "neoracer_rl.envs.neoracer_env.NeoRacerEnvConfig",
+  "neoracer_rl.envs.neoracer_env.Start",
   "neoracer_rl.envs.race.RaceConfig",
   "neoracer_rl.envs.task.CarObservation",
   "neoracer_rl.envs.task.LapEnds",

@@ -32,7 +32,13 @@ from neoracer_mujoco.track_generation import (
 from neoracer_mujoco.track_generation.mjcf import to_start_frame
 from neoracer_spec.neoracer import NEORACER
 
-from neoracer_rl.envs import GeneratedTracks, LapEnds, NeoRacerEnv, NeoRacerEnvConfig
+from neoracer_rl.envs import (
+    GeneratedTracks,
+    LapEnds,
+    NeoRacerEnv,
+    NeoRacerEnvConfig,
+    Start,
+)
 from neoracer_rl.envs.neoracer_env import arenas, arenas_of, lap_angle
 
 LAP = 2.0 * np.pi
@@ -386,10 +392,10 @@ def test_each_car_of_a_grid_stands_at_its_start_along_the_track():
     centerline from the start as its offset says, and as far across it, and
     faces the centerline's direction there, turned by its heading."""
     starts = [
-        ((0.0, 0.275), 0.0),
-        ((0.0, -0.275), np.pi),
-        ((-1.2, 0.275), -0.2),
-        ((-1.2, -0.275), 0.0),
+        Start((0.0, 0.275)),
+        Start((0.0, -0.275), np.pi),
+        Start((-1.2, 0.275), -0.2),
+        Start((-1.2, -0.275)),
     ]
     tracks = GeneratedTracks(difficulty=2, count=3)
     config = NeoRacerEnvConfig(tracks=tracks, spawn=SpawnRange(lateral=0.02, yaw=0.1))
@@ -401,10 +407,9 @@ def test_each_car_of_a_grid_stands_at_its_start_along_the_track():
         spacing = track.total_length / len(track.center)
         center = to_start_frame(track, track.center)
         tangent = np.roll(center, -1, axis=0) - np.roll(center, 1, axis=0)
-        for ((along, across), heading), car in zip(
-            starts, arena.scene.cars, strict=True
-        ):
-            with case((track.seed, along, across, heading)):
+        for start, car in zip(starts, arena.scene.cars, strict=True):
+            (along, across), heading = start.offset, start.heading
+            with case((track.seed, start)):
                 angle = lap_angle(arena, car, data.sensordata)
                 gone = angle * track.total_length / (2.0 * np.pi)
                 off = shortest_loop_distance(gone - along, track.total_length)
@@ -436,7 +441,7 @@ def test_a_pool_leaves_out_the_tracks_without_room_for_its_cars():
     assert [t.seed for t in layouts if isinstance(t, Track)] == seeds[:4]
     spawn = SpawnRange(lateral=0.02, yaw=0.1)
     offsets = [(0.0, 0.275), (0.0, -0.275), (-1.2, 0.275), (-1.2, -0.275)]
-    grid = [(offset, 0.0) for offset in offsets]
+    grid = [Start(offset) for offset in offsets]
     for difficulty in (1, 3):
         config = NeoRacerEnvConfig(
             tracks=GeneratedTracks(difficulty, count=4), spawn=spawn
@@ -450,7 +455,7 @@ def test_a_car_that_a_spawn_can_put_against_the_loops_wall_is_refused():
     """loop_corridor's start does not move, so a car that a spawn could put
     against its wall is refused."""
     with pytest.raises(ValueError, match="loop_corridor"):
-        arenas_of(NeoRacerEnvConfig(), [((0.0, 0.4), 0.0)], False)
+        arenas_of(NeoRacerEnvConfig(), [Start((0.0, 0.4))], False)
 
 
 def test_a_pool_gives_episodes_on_several_tracks():

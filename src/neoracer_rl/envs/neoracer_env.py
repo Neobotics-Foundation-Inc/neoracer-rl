@@ -243,45 +243,46 @@ class Arena:
     """What lap_angle measures progress on."""
 
 
+@dataclass(frozen=True)
+class Start:
+    """Where a car starts on a track, and which way it faces."""
+
+    offset: tuple[float, float] = (0.0, 0.0)
+    """How far from the track's start (m): along its centerline, + forward,
+    and across it, + left."""
+    heading: float = 0.0
+    """Which way the car faces (rad), turned from the track's direction where
+    it stands, + to the left: pi faces back along the track."""
+
+
 def arenas(config: NeoRacerEnvConfig, visuals: bool) -> tuple[Arena, ...]:
     """The tracks of config.tracks, with the car of config at the start, as
     arenas_of gives them."""
-    return arenas_of(config, (((0.0, 0.0), 0.0),), visuals)
+    return arenas_of(config, (Start(),), visuals)
 
 
 def arenas_of(
-    config: NeoRacerEnvConfig,
-    starts: Sequence[tuple[tuple[float, float], float]],
-    visuals: bool,
+    config: NeoRacerEnvConfig, starts: Sequence[Start], visuals: bool
 ) -> tuple[Arena, ...]:
     """The tracks of config.tracks, with a car of config at each of starts,
-    an offset and a heading: the car stands offset[0] m along the track's
-    centerline from its start, + forward, and offset[1] m across it, + left,
-    turned by heading (rad) from the track's direction there, + to the left
-    (pose_along). One car keeps its names
+    placed along the track by pose_along. One car keeps its names
     unprefixed; several are behind the prefixes car0/, car1/, ...
     (assets.compose_cars). On loop_corridor, whose start is on a straight,
-    the offsets and headings are in the start's frame.
+    each Start's offset and heading are in the frame of the track's start.
 
     A generated track where a spawn of config.spawn could put a car against
     a wall (sim.spawn_clears_walls) is left out, as a seed that gives no
     track is. Raise ValueError if one could on loop_corridor, or if the
     seeds give too few tracks."""
     prefixes = [""] if len(starts) == 1 else [f"car{k}/" for k in range(len(starts))]
-
-    def scene_of(
-        spec: mujoco.MjSpec, poses: Sequence[tuple[tuple[float, float], float]]
-    ) -> Scene:
-        entries = [
-            assets.Entry(prefix, offset, heading, config.car_path)
-            for prefix, (offset, heading) in zip(prefixes, poses, strict=True)
-        ]
-        return assets.compose_cars(spec, entries, visuals)
-
     match config.tracks:
         case LoopCorridor() as loop:
+            entries = [
+                assets.Entry(prefix, start.offset, start.heading, config.car_path)
+                for prefix, start in zip(prefixes, starts, strict=True)
+            ]
             spec = mujoco.MjSpec.from_file(_TRACK)
-            scene = scene_of(spec, starts)
+            scene = assets.compose_cars(spec, entries, visuals)
             if not sim.spawn_clears_walls(scene, config.spawn):
                 raise ValueError(
                     f"a spawn of {config.spawn} can put a car at {starts} against "
@@ -295,11 +296,15 @@ def arenas_of(
             for seed in range(first, first + 4 * count):
                 match generate_track(seed, settings):
                     case Track() as track:
-                        poses = []
-                        for offset, heading in starts:
-                            xy, turn = pose_along(track, *offset)
-                            poses.append((xy, turn + heading))
-                        scene = scene_of(to_spec(track, walls), poses)
+                        entries = []
+                        for prefix, start in zip(prefixes, starts, strict=True):
+                            xy, turn = pose_along(track, *start.offset)
+                            heading = turn + start.heading
+                            entries.append(
+                                assets.Entry(prefix, xy, heading, config.car_path)
+                            )
+                        spec = to_spec(track, walls)
+                        scene = assets.compose_cars(spec, entries, visuals)
                         if sim.spawn_clears_walls(scene, config.spawn):
                             pool.append(Arena(scene, track))
                     case NoValidTrack():

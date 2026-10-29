@@ -205,8 +205,7 @@ class NeoRacerRace:
                 self.nbatch, self.action_dim = nrace, 2 * len(self._learners)
             case other:
                 assert_never(other)
-        starts = [(racer.offset, racer.heading) for racer in cars]
-        self._arenas = arenas_of(env, starts, visuals=False)
+        self._arenas = arenas_of(env, [racer.start for racer in cars], visuals=False)
         self.scene = self._arenas[0].scene
         model = self.scene.model
         self._sim: batch.Batch[Any, Any, Any]

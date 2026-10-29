@@ -162,7 +162,7 @@ def reward(step, ends):
 
 `config.agents` says who the agents are. With `Each()`, the default, every learner is an agent, a row of the arrays, and one policy drives them all, each from its own observation. With `Joint()`, the learners of a race are one agent, which sees their observations side by side, gives their actions side by side, two numbers each, and earns the sum of their rewards.
 
-A racer's `offset` is where its car starts: meters along the track from the start, and across it to the left, facing along the track. So a grid's back row follows a bend behind the start. A pool of generated tracks leaves out a track where a spawn of `config.env.spawn` could put a car against a wall, so the pool of a grid can hold other tracks than the pool of one car with the same seeds.
+A racer's `offset` is where its car starts: meters along the track from the start, and across it to the left. Its `heading` is which way the car faces, in radians to the left of the track's direction there: 0, the default, faces along the track, and `math.pi` faces back along it. So a grid's back row follows a bend behind the start. A pool of generated tracks leaves out a track where a spawn of `config.env.spawn` could put a car against a wall, so the pool of a grid can hold other tracks than the pool of one car with the same seeds.
 
 A race ends for every car when a learner meets an end, or at `max_episode_steps`. The other learners are truncated, and the race starts over from its spawn. The cars that a controller or a `Policy` drives have no ends of their own. `NeoRacerBatch` is the race of one learner, so a race steps its cars as the batch steps its one car.
 

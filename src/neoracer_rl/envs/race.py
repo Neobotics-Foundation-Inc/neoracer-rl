@@ -10,8 +10,9 @@ neoracer_batch.NeoRacerRace steps a batch of races:
 
 Every car is a car of config.env.car_path, attached behind a prefix of its
 own (assets.compose_cars) and started at its Racer's offset from the track's
-start, along the track and across it, on a track where no spawn can put it
-against a wall (neoracer_env.arenas_of). The cars meet only in the physics:
+start, along the track and across it, and turned by its heading from the
+track's direction there, on a track where no spawn can put it against a wall
+(neoracer_env.arenas_of). The cars meet only in the physics:
 each car's LiDAR sees the others, and they collide.
 
 A Learner is a car of the policy in training. The env takes its action, as
@@ -89,8 +90,10 @@ class Racer:
     driver: Driver = Learner()
     offset: tuple[float, float] = (0.0, 0.0)
     """Where the car starts (m), from the track's start: along its
-    centerline, + forward, and across it, + left, facing along the track
-    (neoracer_env.arenas_of)."""
+    centerline, + forward, and across it, + left (neoracer_env.arenas_of)."""
+    heading: float = 0.0
+    """Which way the car faces (rad), turned from the track's direction where
+    it starts, + to the left: pi faces back along the track."""
 
 
 @dataclass(frozen=True)

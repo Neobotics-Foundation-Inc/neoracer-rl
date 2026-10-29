@@ -246,26 +246,28 @@ class Arena:
 def arenas(config: NeoRacerEnvConfig, visuals: bool) -> tuple[Arena, ...]:
     """The tracks of config.tracks, with the car of config at the start, as
     arenas_of gives them."""
-    return arenas_of(config, ((0.0, 0.0),), visuals)
+    return arenas_of(config, (((0.0, 0.0), 0.0),), visuals)
 
 
 def arenas_of(
     config: NeoRacerEnvConfig,
-    offsets: Sequence[tuple[float, float]],
+    starts: Sequence[tuple[tuple[float, float], float]],
     visuals: bool,
 ) -> tuple[Arena, ...]:
-    """The tracks of config.tracks, with a car of config at each of offsets
-    (m) from the track's start: along its centerline, + forward, and across
-    it, + left, facing along the track (pose_along). One car keeps its names
+    """The tracks of config.tracks, with a car of config at each of starts,
+    an offset and a heading: the car stands offset[0] m along the track's
+    centerline from its start, + forward, and offset[1] m across it, + left,
+    turned by heading (rad) from the track's direction there, + to the left
+    (pose_along). One car keeps its names
     unprefixed; several are behind the prefixes car0/, car1/, ...
     (assets.compose_cars). On loop_corridor, whose start is on a straight,
-    the offsets are in the start's frame.
+    the offsets and headings are in the start's frame.
 
     A generated track where a spawn of config.spawn could put a car against
     a wall (sim.spawn_clears_walls) is left out, as a seed that gives no
     track is. Raise ValueError if one could on loop_corridor, or if the
     seeds give too few tracks."""
-    prefixes = [""] if len(offsets) == 1 else [f"car{k}/" for k in range(len(offsets))]
+    prefixes = [""] if len(starts) == 1 else [f"car{k}/" for k in range(len(starts))]
 
     def scene_of(
         spec: mujoco.MjSpec, poses: Sequence[tuple[tuple[float, float], float]]
@@ -279,10 +281,10 @@ def arenas_of(
     match config.tracks:
         case LoopCorridor() as loop:
             spec = mujoco.MjSpec.from_file(_TRACK)
-            scene = scene_of(spec, [(offset, 0.0) for offset in offsets])
+            scene = scene_of(spec, starts)
             if not sim.spawn_clears_walls(scene, config.spawn):
                 raise ValueError(
-                    f"a spawn of {config.spawn} can put a car at {offsets} against "
+                    f"a spawn of {config.spawn} can put a car at {starts} against "
                     "a wall of loop_corridor"
                 )
             return (Arena(scene, loop),)
@@ -293,7 +295,10 @@ def arenas_of(
             for seed in range(first, first + 4 * count):
                 match generate_track(seed, settings):
                     case Track() as track:
-                        poses = [pose_along(track, *offset) for offset in offsets]
+                        poses = []
+                        for offset, heading in starts:
+                            xy, turn = pose_along(track, *offset)
+                            poses.append((xy, turn + heading))
                         scene = scene_of(to_spec(track, walls), poses)
                         if sim.spawn_clears_walls(scene, config.spawn):
                             pool.append(Arena(scene, track))
@@ -305,7 +310,7 @@ def arenas_of(
                     return tuple(pool)
             raise ValueError(
                 f"seeds {first} to {first + 4 * count - 1} gave only {len(pool)} "
-                f"tracks of difficulty {difficulty} with room for cars at {offsets}, "
+                f"tracks of difficulty {difficulty} with room for cars at {starts}, "
                 f"not {count}"
             )
         case other:

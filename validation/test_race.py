@@ -2,9 +2,10 @@
 Laws for races (neoracer_rl.envs.race, stepped by neoracer_batch.NeoRacerRace):
 the agents of Each and Joint are the same learners, a Policy car drives as a
 Learner given its actions, each car's Step sees the others, a learner's end
-ends its race, the controllers drive, and no car of a grid starts against a
-wall or another car. validation/test_neoracer_batch.py
-has the laws of NeoRacerBatch, a race of one Learner.
+ends its race, the controllers drive, no car of a grid starts against a wall
+or another car, and a car turned by pi drives back around the lap.
+validation/test_neoracer_batch.py has the laws of NeoRacerBatch, a race of
+one Learner.
 """
 
 import os
@@ -285,3 +286,26 @@ def test_no_car_of_a_grid_starts_against_a_wall_or_another_car():
                 assert not out.done.any()
                 assert not out.obs.any()
         env.close()
+
+
+def _progress(step: Step) -> Observations:
+    """How far around the track the car has gone in the episode."""
+    return step.progress.total[:, None].astype(np.float32)
+
+
+def test_a_car_turned_by_pi_drives_back_around_the_lap():
+    """A learner whose heading is pi faces back along the track: at full
+    throttle it goes back around the lap, while the learner beside it with
+    no heading goes forward."""
+    turned = Racer(offset=(0.0, 0.275), heading=np.pi)
+    racers = (Racer(offset=(0.0, -0.275)), turned)
+    tracks, spawn = GeneratedTracks(count=2), SpawnRange(lateral=0.02, yaw=0.1)
+    env_config = NeoRacerEnvConfig(tracks=tracks, spawn=spawn, observe=_progress)
+    config = RaceConfig(env_config, racers)
+    env, state = _race(4, config)
+    for _ in range(20):
+        state, out = env.step(state, np.tile(FULL, (env.nbatch, 1)))
+        assert not out.done.any()
+    assert (out.obs[0::2, 0] > 0.05).all()
+    assert (out.obs[1::2, 0] < -0.05).all()
+    env.close()

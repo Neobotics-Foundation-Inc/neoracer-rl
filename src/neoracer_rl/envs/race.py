@@ -3,16 +3,16 @@ A race: several cars on one track, each driven by the policy in training, by
 a controller of neoracer_mujoco.control, or by a policy of its own.
 neoracer_batch.NeoRacerRace steps a batch of races:
 
-    config = RaceConfig(cars=(Racer(), Racer(TrackCentering(), (1.0, 0.0))))
+    ahead = Racer(TrackCentering(), Start(offset=(1.0, 0.0)))
+    config = RaceConfig(cars=(Racer(), ahead))
     env = NeoRacerRace(Cpu(nthread=8), nrace=32, config=config)
     state = env.reset(rng)
     state, out = env.step(state, actions)  # (env.nbatch, env.action_dim)
 
 Every car is a car of config.env.car_path, attached behind a prefix of its
-own (assets.compose_cars) and started at its Racer's offset from the track's
-start, along the track and across it, on a track where no spawn can put it
-against a wall (neoracer_env.arenas_of). The cars meet only in the physics:
-each car's LiDAR sees the others, and they collide.
+own (assets.compose_cars) and started at its Racer's Start, on a track where
+no spawn can put it against a wall (neoracer_env.arenas_of). The cars meet
+only in the physics: each car's LiDAR sees the others, and they collide.
 
 A Learner is a car of the policy in training. The env takes its action, as
 NeoRacerEnv takes one, and calls config.env's observe, terminate and reward
@@ -47,7 +47,7 @@ import numpy.typing as npt
 from neoracer_mujoco.control.track_centering import TrackCenteringConfig
 from neoracer_mujoco.control.wall_following import WallFollowingConfig
 
-from .neoracer_env import NeoRacerEnvConfig
+from .neoracer_env import NeoRacerEnvConfig, Start
 from .task import Step
 
 
@@ -87,10 +87,7 @@ class Racer:
     """A car of a race."""
 
     driver: Driver = Learner()
-    offset: tuple[float, float] = (0.0, 0.0)
-    """Where the car starts (m), from the track's start: along its
-    centerline, + forward, and across it, + left, facing along the track
-    (neoracer_env.arenas_of)."""
+    start: Start = Start()
 
 
 @dataclass(frozen=True)
@@ -115,7 +112,7 @@ class RaceConfig:
     of every learner."""
 
     env: NeoRacerEnvConfig = NeoRacerEnvConfig()
-    cars: tuple[Racer, ...] = (Racer(), Racer(TrackCentering(), (1.0, 0.0)))
+    cars: tuple[Racer, ...] = (Racer(), Racer(TrackCentering(), Start((1.0, 0.0))))
     agents: Agents = Each()
 
     def __post_init__(self) -> None:

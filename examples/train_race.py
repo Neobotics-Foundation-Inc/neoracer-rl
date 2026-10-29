@@ -53,6 +53,7 @@ from neoracer_rl.envs import (
     NeoRacerEnvConfig,
     RaceConfig,
     Racer,
+    Start,
     TrackCentering,
     WallFollowing,
 )
@@ -106,7 +107,7 @@ def race_config(opponent: Opponent, offset: float) -> RaceConfig:
         case _:
             assert_never(opponent)
     env = NeoRacerEnvConfig(terminate=RaceEnds(), reward=RaceReward())
-    return RaceConfig(env, (Racer(), Racer(driver, (offset, 0.0))))
+    return RaceConfig(env, (Racer(), Racer(driver, Start((offset, 0.0)))))
 
 
 @dataclass(frozen=True)

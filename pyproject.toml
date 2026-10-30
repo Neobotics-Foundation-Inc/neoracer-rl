@@ -7,6 +7,16 @@ name = "neoracer-rl"
 version = "0.1.0"
 description = "Gymnasium environments and example learning algorithms for the simulated NeoRacer, a 1/12-scale autonomous racing car."
 readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+keywords = ["mujoco", "robotics", "reinforcement learning", "gymnasium", "autonomous racing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 requires-python = ">=3.14"
 dependencies = [
     # The simulator: the car model, the tracks and the sensors. The wheel
@@ -30,6 +40,10 @@ dev = [
     "ty==0.0.87",
     "pybind11-stubgen==3.0.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/Neobotics-Foundation-Inc/neoracer-rl"
+Issues = "https://github.com/Neobotics-Foundation-Inc/neoracer-rl/issues"
 
 [tool.hatch.metadata]
 # neoracer-mujoco is installed from its GitHub Release, not from PyPI.

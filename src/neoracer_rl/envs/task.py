@@ -11,8 +11,10 @@ NeoRacerEnv calls them with one row, and NeoRacerBatch with one row per
 episode, so a function serves both. An episode that meets several ends in a
 step has the first of them, in terminate's order, and reward sees only that
 one. The defaults, CarObservation, LapEnds and ProgressReward, are the lap
-task of the README. A new task passes its own functions in
-NeoRacerEnvConfig, and a function can build on the defaults:
+task of the README. Each is a frozen dataclass with __call__, so a config
+that holds them can be compared, printed and saved, as a function cannot. A
+new task passes its own functions in NeoRacerEnvConfig, and a function can
+build on the defaults:
 
     def reward(step, ends):
         return ProgressReward()(step, ends) - 0.01 * np.abs(step.action[:, 1])

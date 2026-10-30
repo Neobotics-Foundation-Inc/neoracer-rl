@@ -92,11 +92,10 @@ A parser checks a value and returns a type that keeps the result.
   The edges are files, the MuJoCo model, the command line and raw sensor arrays.
 - A parser returns the typed value or raises an error with a clear message.
   `def parse_side(text: str) -> Side`, not `def check_side(text: str) -> None`.
-- Keep the `MjSpec` next to the compiled model (`assets.compose` returns a `Scene`), and refer to each part of the model by its spec element (`scene.car`, a `Car`).
-  Read and write a part by binding it where you use it: `data.bind_scalar(car.steer).ctrl = steer`, `data.bind_scalar(car.joint).qpos`.
+- Keep the `MjSpec` next to the compiled model, and refer to each part of the model by its spec element, as neoracer-mujoco's scenes do.
+  Read and write a part by binding it where you use it, with `bind_scalar` (neoracer_mujoco.scene says why): `data.bind_scalar(car.steer).ctrl = steer`.
   Do not keep ids or indices, call `mj_name2id` or `model.body(name)`, or compute addresses (`jnt_qposadr`, `sensor_adr`).
-  MJX has the same bind (`dx.bind(mx, element)`), so the step code keeps its shape on the JAX backend.
-  Call `bind_scalar`, not `bind`: it is what `bind` runs for one element, and the generated type stubs get `bind` wrong.
+  Where an array has no bind, one module computes the addresses, and the rest of the code calls it.
 - After the edge, the code trusts the type. Do not check the same property again.
 - Some invariants have no Python type, for example "a positive float".
   Check such an invariant once, where the value is made (`__post_init__` of its params).
@@ -165,14 +164,14 @@ def reward(term: RewardTerm, step: StepInfo) -> float:
 - Data can be compared, printed, saved in a config file, hashed and tested. A lambda cannot.
 - A new behavior is a new case. The type checker then shows each place to update.
 - Use a callable argument only when the set of behaviors is open,
-  for example a policy that a user gives to a rollout function, or a task's reward (`task.Reward`).
+  for example a policy that a user gives to a rollout function, or a task's reward.
   Then give it a type: `Callable[[Observation], Action]` or a `Protocol`.
-  Our own values of it are still data: a frozen dataclass with `__call__`, as `task.ProgressReward` is.
+  Our own values of it are still data: a frozen dataclass with `__call__`.
 
 ## 6. Pure core, effects at the edge
 
 - Physics steps, the viewer, files, time and random numbers are effects.
-  Keep them in thin outer functions: `examples/`, `sim.py`, the environment's `step`.
+  Keep them in thin outer functions, such as the scripts in `examples/` and the environment's `step`.
 - Controllers, signal computation, reward and termination are pure functions of their inputs.
 - State that lives from one step to the next is an explicit value:
 

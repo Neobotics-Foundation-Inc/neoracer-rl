@@ -40,7 +40,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from neoracer_rl.envs import NeoRacerEnv
-from neoracer_rl.envs.neoracer_env import OBS_DIM
+from neoracer_rl.envs.task import OBS_DIM
 
 import store
 import tabular

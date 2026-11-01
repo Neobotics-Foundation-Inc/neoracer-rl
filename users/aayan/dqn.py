@@ -210,9 +210,21 @@ def greedy_action(online, stats: ObsStats, obs: np.ndarray, params: DQNParams) -
     return int(jnp.argmax(values[0]))
 
 
-def train(total_steps: int, params: DQNParams, seed: int, log_every: int = 10_000):
-    """Run DQN for total_steps environment steps. Returns the network, the
-    observation statistics and one row per finished episode."""
+def train(total_steps: int, params: DQNParams, seed: int, log_every: int = 10_000,
+          eval_every: int = 25_000, eval_episodes: int = 3):
+    """Run DQN for total_steps environment steps.
+
+    Returns the network at the end, the observation statistics, one row per
+    finished episode, one row per evaluation, and the best evaluation with the
+    network that scored it.
+
+    It evaluates every eval_every steps and keeps the best network it has seen,
+    ranked on laps completed and then on how far round the car got. On this
+    task a run reaches a full lap and then comes apart: over five seeds at
+    300k steps every one peaked near 175k and every one was worse at the end,
+    the mean lap fraction falling from 0.93 to 0.46. Keeping only the last
+    network throws away the policy the run actually found.
+    """
     key = jax.random.key(seed)
     key, init_key = jax.random.split(key)
     online = init_q(init_key, params)
@@ -231,6 +243,8 @@ def train(total_steps: int, params: DQNParams, seed: int, log_every: int = 10_00
     obs, _ = env.reset(seed=seed)
     stats.update(obs)
     history, episode_return, episode_steps = [], 0.0, 0
+    evals: list[dict] = []
+    best: dict = {"rank": None}
     started = time.time()
 
     for step in range(1, total_steps + 1):
@@ -278,6 +292,21 @@ def train(total_steps: int, params: DQNParams, seed: int, log_every: int = 10_00
         if step % params.target_sync_every == 0:
             target = online
 
+        if eval_every and (step % eval_every == 0 or step == total_steps):
+            ret, lap, outcomes, lengths = evaluate(
+                online, stats, params, eval_episodes, seed_base=9_000
+            )
+            laps_done = sum(o == "lap_complete" for o in outcomes)
+            evals.append({"step": step, "return": ret, "lap": lap,
+                          "laps_done": laps_done, "episodes": len(outcomes)})
+            rank = (laps_done, lap)
+            if best["rank"] is None or rank > best["rank"]:
+                # stats updates in place, so the normalization has to be copied
+                # with the weights it was trained against.
+                best = {"rank": rank, "step": step, "return": ret, "lap": lap,
+                        "laps_done": laps_done, "net": _flat(online),
+                        "obs_mean": stats.mean.copy(), "obs_var": stats.var.copy()}
+
         if step % log_every == 0 or step == total_steps:
             recent = history[-20:]
             laps = np.mean([h["lap"] for h in recent]) if recent else 0.0
@@ -289,7 +318,11 @@ def train(total_steps: int, params: DQNParams, seed: int, log_every: int = 10_00
             )
 
     env.close()
-    return online, stats, history
+    if best["rank"] is None:  # nothing was evaluated, so the last is the best
+        best = {"rank": (0, 0.0), "step": total_steps, "return": 0.0, "lap": 0.0,
+                "laps_done": 0, "net": _flat(online),
+                "obs_mean": stats.mean.copy(), "obs_var": stats.var.copy()}
+    return online, stats, history, evals, best
 
 
 def evaluate(online, stats: ObsStats, params: DQNParams, episodes: int = 5, seed_base: int = 1000):
@@ -359,6 +392,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--eval-episodes", type=int, default=5)
     parser.add_argument("--log-every", type=int, default=10_000)
+    parser.add_argument("--eval-every", type=int, default=25_000,
+                        help="evaluate this often, and keep the best network; 0 to never")
+    parser.add_argument("--eval-during", type=int, default=3,
+                        help="episodes per evaluation while training")
     parser.add_argument("--name", default=None, help="name the saved network")
     parser.add_argument("--eval", metavar="RUN.npz", default=None,
                         help="score a saved network, do not train")
@@ -402,14 +439,20 @@ def main() -> None:
           f"{params.batch_size}, {'double' if params.double else 'plain'}, "
           f"{args.steps} steps")
     started = time.time()
-    net, stats, history = train(args.steps, params, args.seed, args.log_every)
+    net, stats, history, evals, best = train(
+        args.steps, params, args.seed, args.log_every,
+        args.eval_every, args.eval_during,
+    )
     minutes = (time.time() - started) / 60
 
-    print("\n  greedy evaluation:")
+    print("\n  greedy evaluation of the last network:")
     mean_ret, mean_lap, outcomes, lengths = evaluate(net, stats, params, args.eval_episodes)
     laps_done = sum(o == "lap_complete" for o in outcomes)
     print(f"  => mean return {mean_ret:+.2f}   mean lap {mean_lap:.3f}   "
           f"laps completed {laps_done}/{len(outcomes)}")
+    if evals:
+        print(f"  best was lap {best['lap']:.3f} with {best['laps_done']} laps "
+              f"at step {best['step']}, and that is what is saved")
 
     settings = {
         "method": "dqn",
@@ -424,22 +467,40 @@ def main() -> None:
         "gamma": params.gamma,
         "double": params.double,
         "minutes": round(minutes, 2),
+        "best_step": best["step"],
+        "best_lap": round(best["lap"], 4),
+        "best_laps_done": best["laps_done"],
+        "final_lap": round(mean_lap, 4),
     }
     path = store.unique(args.name or f"dqn_{args.steps}steps_s{args.seed}")
     # The same stamp store.save_table puts on a table: when it ran and against
     # which package versions, because those move week to week.
     settings = {**settings, "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 **store.versions()}
+    # The best network, not the last: see train. The last one is saved beside
+    # it so the way a run comes apart can still be looked at.
     np.savez(
         path,
         hidden=np.array(params.hidden),
+        obs_mean=best["obs_mean"],
+        obs_var=best["obs_var"],
+        history=np.array([[h["return"], h["lap"]] for h in history]),
+        evals=np.array([[e["step"], e["return"], e["lap"], e["laps_done"]]
+                        for e in evals]) if evals else np.zeros((0, 4)),
+        settings=json.dumps(settings),
+        **best["net"],
+    )
+    last = path.with_name(path.stem + ".final.npz")
+    np.savez(
+        last,
+        hidden=np.array(params.hidden),
         obs_mean=stats.mean,
         obs_var=stats.var,
-        history=np.array([[h["return"], h["lap"]] for h in history]),
         settings=json.dumps(settings),
         **_flat(net),
     )
     print(f"  saved -> {path}")
+    print(f"  the last network -> {last}")
     store.log_result("train", {**settings, "return": round(mean_ret, 3),
                                "lap": round(mean_lap, 4), "laps": laps_done,
                                "n": len(outcomes), "table": path.name})

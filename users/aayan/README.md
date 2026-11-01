@@ -17,6 +17,7 @@ Everything here is an experiment. Nothing in `src/`, `examples/` or
 | `dqn.py` | deep Q-learning, the same problem with a network instead of a table |
 | `baselines.py` | classical controllers to measure a learned policy against |
 | `run.py` | scores the controllers and tunes their gains |
+| `experiments.py` | trains the seeds of EXPERIMENTS.md and prints its tables |
 | `store.py` | where tables and results go, so a run never overwrites the last |
 | `tracks.py` | names the tracks, composes them, and gives a centre line |
 | `record.py` | writes an mp4 of a policy driving |
@@ -34,6 +35,7 @@ python3 users/aayan/dqn.py --steps 300000             # deep Q-learning
 python3 users/aayan/dqn.py --hidden 256 256 --learning-rate 1e-4
 python3 users/aayan/run.py solo                       # score the classical controllers
 python3 users/aayan/run.py tune pd_centering          # sweep one controller's gains
+python3 users/aayan/experiments.py runs               # every run of EXPERIMENTS.md
 python3 users/aayan/record.py runs/sarsa.npz          # write an mp4 of it driving
 python3 users/aayan/tracks.py                         # list the tracks and check they load
 python3 users/aayan/panel.py                          # a browser panel for all of it

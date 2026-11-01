@@ -1,15 +1,13 @@
 """
-Score the classical controllers, tune their gains, and race them.
+Score the classical controllers and tune their gains.
 
     python3 users/aayan/run.py solo                      # score every controller
     python3 users/aayan/run.py solo --episodes 5
     python3 users/aayan/run.py tune pd_centering         # sweep one controller's gains
-    python3 users/aayan/run.py duel --agent runs/sarsa.npz --opponent pure_pursuit
 
 solo runs each controller alone in NeoRacerEnv, the same environment the
 tabular agents train in, so the numbers go straight into the table in
 README.md. tune sweeps the gains of one controller and prints the best few.
-duel puts a saved table against a controller on the same track.
 """
 
 import argparse
@@ -20,8 +18,6 @@ import numpy as np
 from neoracer_rl.envs import NeoRacerEnv
 
 import baselines
-import duel
-import multicar
 import store
 import tabular
 import tracks
@@ -44,7 +40,7 @@ def solo(controller, episodes: int = 5, seed_base: int = 1000, track: str = "loo
         controller.reset()
         total, steps, done = 0.0, 0, False
         while not done:
-            pose = multicar.pose_of(env.data, env.scene.car) if needs_pose else None
+            pose = baselines.pose_of(env.data, env.scene.car) if needs_pose else None
             throttle, steer = controller.act(obs, dt, pose)
             obs, r, terminated, truncated, info = env.step(
                 np.array([throttle, steer], dtype=np.float32)
@@ -192,13 +188,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("mode", choices=("solo", "tune", "duel"))
+    parser.add_argument("mode", choices=("solo", "tune"))
     parser.add_argument("controller", nargs="?", default=None)
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--track", default="loop_corridor")
-    parser.add_argument("--agent", default=None, help="a table saved by tabular.py")
-    parser.add_argument("--opponent", default="pd_centering")
-    parser.add_argument("--abreast", action="store_true")
     args = parser.parse_args()
 
     match args.mode:
@@ -229,32 +222,6 @@ def main() -> None:
             if args.controller is None:
                 raise SystemExit(f"say which controller to tune: {CONTROLLERS}")
             tune(args.controller, args.episodes, args.track)
-        case "duel":
-            opponent = duel.make_opponent(args.opponent, args.track)
-            policy = None
-            if args.agent is not None:
-                table = np.load(args.agent)["Q"]
-                policy = lambda obs: np.array(  # noqa: E731
-                    tabular.ACTIONS[int(np.argmax(table[tabular.discretize(obs)]))],
-                    dtype=np.float32,
-                )
-            config = duel.DuelConfig(track=args.track, abreast=args.abreast)
-            print(f"{args.agent or 'a still car'} against {opponent.name}")
-            rows = duel.race(opponent, policy, args.episodes, config)
-            for ep, (total, mine, theirs, reason) in enumerate(rows):
-                print(
-                    f"  episode {ep}: return {total:+7.2f}  agent lap {mine:.3f}  "
-                    f"opponent lap {theirs:.3f}  ended {reason or 'truncated'}"
-                )
-            store.log_result(
-                "duel",
-                {"agent": args.agent or "still", "opponent": args.opponent,
-                 "track": args.track, "abreast": args.abreast,
-                 "episodes": len(rows),
-                 "agent_lap": round(float(np.mean([r[1] for r in rows])), 4),
-                 "opponent_lap": round(float(np.mean([r[2] for r in rows])), 4),
-                 "agent_finished": sum(r[3] == "lap_complete" for r in rows)},
-            )
 
 
 if __name__ == "__main__":

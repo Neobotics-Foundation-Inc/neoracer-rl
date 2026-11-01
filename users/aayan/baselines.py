@@ -31,6 +31,7 @@ Frame: +X forward, +Y left, +Z up. Steering is + for left, as in the contract.
 
 from dataclasses import dataclass, field, replace
 
+import mujoco
 import numpy as np
 
 # The 8 LiDAR beams of the observation, every 45 degrees, in the order the
@@ -53,6 +54,20 @@ def beams(obs: np.ndarray) -> np.ndarray:
 def speed(obs: np.ndarray) -> float:
     """The car's own speed estimate, in m/s, from its wheel encoders."""
     return float(obs[19])
+
+
+def pose_of(data: mujoco.MjData, car) -> tuple[float, float, float]:
+    """A car's x, y (m) and heading (rad, 0 along +X, growing anticlockwise).
+
+    Only PurePursuit needs this: it steers toward a point on the center line,
+    so it has to know where the car actually is. Everything else drives on the
+    LiDAR alone.
+    """
+    body = data.bind_scalar(car.body)
+    x, y = float(body.xpos[0]), float(body.xpos[1])
+    w, qx, qy, qz = (float(v) for v in body.xquat)
+    yaw = np.arctan2(2 * (w * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+    return x, y, float(yaw)
 
 
 @dataclass(frozen=True)

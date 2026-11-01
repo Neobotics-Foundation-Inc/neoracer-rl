@@ -16,9 +16,8 @@ Everything here is an experiment. Nothing in `src/`, `examples/` or
 | `tabular.py` | the chapter 4 to 6 agents, and the discretizer that makes a table possible |
 | `dqn.py` | deep Q-learning, the same problem with a network instead of a table |
 | `baselines.py` | classical controllers to measure a learned policy against |
-| `multicar.py` | puts more than one car on a track |
-| `duel.py` | a Gymnasium environment where the agent races an opponent |
-| `run.py` | scores the controllers, tunes their gains, and runs duels |
+| `run.py` | scores the controllers and tunes their gains |
+| `experiments.py` | trains the seeds of EXPERIMENTS.md and prints its tables |
 | `store.py` | where tables and results go, so a run never overwrites the last |
 | `tracks.py` | names the tracks, composes them, and gives a centre line |
 | `record.py` | writes an mp4 of a policy driving |
@@ -36,10 +35,9 @@ python3 users/aayan/dqn.py --steps 300000             # deep Q-learning
 python3 users/aayan/dqn.py --hidden 256 256 --learning-rate 1e-4
 python3 users/aayan/run.py solo                       # score the classical controllers
 python3 users/aayan/run.py tune pd_centering          # sweep one controller's gains
-python3 users/aayan/run.py duel --agent runs/sarsa.npz --opponent pure_pursuit
+python3 users/aayan/experiments.py runs               # every run of EXPERIMENTS.md
 python3 users/aayan/record.py runs/sarsa.npz          # write an mp4 of it driving
 python3 users/aayan/tracks.py                         # list the tracks and check they load
-python3 users/aayan/multicar.py                       # put two cars on the track
 python3 users/aayan/panel.py                          # a browser panel for all of it
 ```
 
@@ -57,7 +55,7 @@ matter because the simulator moves fast. Read them back with
 `store.load_table`, or see `tabular.py --eval`, which prints them.
 
 Every run also appends one line to `runs/results.jsonl`: training, evaluation,
-a solo score, a tuning sweep, a duel. The file is only ever appended to. A
+a solo score, a tuning sweep. The file is only ever appended to. A
 tuning sweep additionally writes every setting it tried to
 `runs/tune_<controller>.jsonl`, because the sweep is the slow part and the
 printed top six throws the rest away.
@@ -215,30 +213,20 @@ what I expected.
 
 ## Racing a second car
 
-`multicar.py` puts more than one NeoRacer on a track. The simulator attaches a
-car to a track by grafting its body into the track's spec, and MjSpec takes a
-name prefix, so attaching the same car file twice gives two complete and
-independent cars in one model: `a_motor` and `b_motor`, `a_imu_accel` and
-`b_imu_accel`. Nothing in the simulator looks a part up by a global name, it
-binds spec elements, so both cars bind to the same model without clashing.
+This folder used to do it, in `multicar.py` and `duel.py`: attach the car's
+spec to the track twice under different name prefixes, wrap the pair as a
+Gymnasium environment, and let a controller drive one car while the agent
+learned on the other.
 
-`duel.py` wraps that as a Gymnasium environment. The agent drives one car and
-an opponent drives the other. The agent's observation is the same 20 numbers
-`NeoRacerEnv` gives, in the same order, so a policy trained alone races without
-changing a line, and it sees the other car only the way the real car would, as
-a shorter LiDAR beam. Reward and termination come from the same public
-functions `NeoRacerEnv` uses, so a return in a duel means what a return there
-means.
+`neoracer_rl.envs.race` does all of that now, and better. A `Racer` names its
+driver and where it starts, `RaceConfig` holds the cars of a race, and `Each`
+or `Joint` says whether the learners are separate agents or one. It runs races
+in a batch rather than one at a time, and since #61 it lays the grid along the
+track, which is the thing my version got wrong: it placed its cars at the one
+spawn offset `loop_corridor` happens to allow.
 
-```sh
-python3 users/aayan/run.py duel --agent runs/sarsa.npz --opponent pure_pursuit
-python3 users/aayan/run.py duel --opponent runs/mc.npz --abreast
-```
-
-The opponent is any of the controllers below, or a table saved earlier, so a
-policy can race the one that trained before it. What the opponent cannot do is
-block on purpose. It drives its own race and the agent has to get past it,
-which is enough to stop the track being empty.
+So both files are gone. Nothing here should keep a worse copy of something the
+package maintains.
 
 A Sarsa table trained alone for 800 episodes finishes every lap by itself, in
 about 53 s. Put a controller on the same track and that changes:
@@ -314,13 +302,6 @@ thread for its window.
 
 ## Still open
 
-- A duel runs on `loop_corridor` only. The environment can now train on
-  generated tracks through `GeneratedTracks`, but `multicar.py` places its
-  cars using the one spawn offset that track needs, and a generated loop would
-  need its start line read off the centre line.
-- The opponent drives its own race and never reacts to the agent. Blocking,
-  overtaking and defending are the interesting part and none of them exist
-  yet.
 - The state has no memory and no idea where on the lap the car is, so two
   corners that look alike are the same state. That aliasing is why these
   methods level off on this track.

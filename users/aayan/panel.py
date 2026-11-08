@@ -93,7 +93,7 @@ def _train_worker(method: str, episodes: int, alpha: float,
             raise _Stopped()
         # Subsample: a 600-step episode does not need 600 points to show a shape.
         if len(live_path) < 400:
-            p = env.data.body("car").xpos
+            p = env.data.bind_scalar(env.scene.car.body).xpos
             live_path.append([round(float(p[0]), 3), round(float(p[1]), 3)])
 
     def log(ep, total_eps, ret, info, steps, eps_now):
@@ -200,7 +200,7 @@ def preview_png(track: str) -> bytes:
         return cached.read_bytes()
 
     with _render_lock:
-        model = tracks.load(track)
+        model = tracks.load(track).model
         data = mujoco.MjData(model)
         for _ in range(300):
             mujoco.mj_step(model, data)

@@ -1,10 +1,10 @@
 """
 Build a drivable scene: a track with the car on it.
 
-The simulator does the work. assets.compose attaches the car to a track spec
-and returns a Scene, whose .model is the compiled MjModel this module hands
-back. track_generation builds procedural tracks. This module only names the
-tracks I use and remembers where the car belongs on each one.
+The simulator does the work. assets.compose attaches the car to a track spec,
+at the track's start site if it has one, and returns a Scene, which this module
+hands back. track_generation builds procedural tracks. This module only names
+the tracks I use.
 
 A track name is either one of the shipped tracks (run this file to list them)
 or "gen:<seed>" / "gen:<seed>:<difficulty>" for a generated loop. Difficulty
@@ -17,7 +17,7 @@ import os
 
 import mujoco
 import numpy as np
-from neoracer_mujoco import assets
+from neoracer_mujoco import Scene, assets
 from neoracer_mujoco.track_generation import (
     Difficulty,
     NoValidTrack,
@@ -28,15 +28,6 @@ from neoracer_mujoco.track_generation import (
 )
 
 GEN_PREFIX = "gen:"
-
-# Where the car starts on each shipped track, in metres, as the offset that
-# assets.compose applies. loop_corridor is a ring between an inner and an outer
-# wall, so a car left at the origin lands inside the walled island in the
-# middle. Its bottom straight sits at y = -2.5, halfway between the inner wall
-# at y = -2 and the outer wall at y = -3. Every other track starts the car at
-# its origin, and NeoRacerEnv uses the same offset for loop_corridor.
-SPAWN: dict[str, assets.Position] = {"loop_corridor": (0.0, -2.5, 0.0)}
-
 
 def shipped() -> list[str]:
     """The names of the track XMLs that come with the simulator."""
@@ -94,15 +85,13 @@ def track_path(name: str) -> str:
     return path
 
 
-def load(name: str = "loop_corridor") -> mujoco.MjModel:
-    """Compile a track with the car on it. See the module docstring for names."""
+def load(name: str = "loop_corridor") -> Scene:
+    """Compile a track with the car on it. See the module docstring for names.
+    loop_corridor's start site puts the car on its bottom straight; a track
+    without one starts the car at its origin."""
     if (generated := parse_generated(name)) is not None:
-        return assets.compose(generated_spec(*generated)).model
-
-    path = track_path(name)
-    stem = os.path.splitext(os.path.basename(path))[0]
-    spec = mujoco.MjSpec.from_file(path)
-    return assets.compose(spec, pos=SPAWN.get(stem, (0.0, 0.0, 0.0))).model
+        return assets.compose(generated_spec(*generated))
+    return assets.compose(mujoco.MjSpec.from_file(track_path(name)))
 
 
 # loop_corridor is a ring between an outer wall at x = +-4, y = +-3 and an
@@ -153,9 +142,10 @@ def describe(model: mujoco.MjModel) -> str:
 
 if __name__ == "__main__":
     for name in [*shipped(), "gen:1", "gen:7:0", "gen:7:3"]:
-        model = load(name)
+        scene = load(name)
+        model = scene.model
         data = mujoco.MjData(model)
         for _ in range(600):
             mujoco.mj_step(model, data)
-        height = data.body("car").xpos[2]
+        height = data.bind_scalar(scene.car.body).xpos[2]
         print(f"{name:20s} {describe(model):56s} car height after 1 s = {height:+.4f} m")

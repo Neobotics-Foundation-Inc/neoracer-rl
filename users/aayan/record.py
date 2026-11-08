@@ -33,11 +33,11 @@ RUNS = _HERE / "runs"
 WIDTH, HEIGHT = 640, 480
 
 
-def _camera(model, chase: bool):
+def _camera(model, chase: bool, car: int = -1):
     cam = mujoco.MjvCamera()
     if chase:
         cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
-        cam.trackbodyid = model.body("car").id
+        cam.trackbodyid = car
         cam.distance, cam.elevation, cam.azimuth = 1.6, -25.0, 0.0
     else:
         # Overhead view framed to whatever track this is, so a lap reads as a
@@ -73,7 +73,8 @@ def record(policy, out: pathlib.Path, seed: int, fps: int, chase: bool,
     env = NeoRacerEnv()
     obs, _ = env.reset(seed=seed)
 
-    cam = _camera(env.model, chase)
+    car = env.model.bind_scalar(env.scene.car.body).id
+    cam = _camera(env.model, chase, car)
     # The env steps physics several times per action (30 Hz control over a
     # ~500 Hz sim), so one frame per env.step already gives real-time video.
     frames = []
@@ -87,9 +88,8 @@ def record(policy, out: pathlib.Path, seed: int, fps: int, chase: bool,
                 cam.azimuth = float(
                     np.degrees(
                         np.arctan2(
-                            2 * (env.data.xquat[env.model.body("car").id][0]
-                                 * env.data.xquat[env.model.body("car").id][3]),
-                            1 - 2 * env.data.xquat[env.model.body("car").id][3] ** 2,
+                            2 * (env.data.xquat[car][0] * env.data.xquat[car][3]),
+                            1 - 2 * env.data.xquat[car][3] ** 2,
                         )
                     )
                 )

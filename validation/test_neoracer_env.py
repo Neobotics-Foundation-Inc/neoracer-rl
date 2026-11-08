@@ -19,7 +19,7 @@ import pytest
 from cases import case
 from gymnasium import spaces
 from gymnasium.utils.env_checker import check_env
-from neoracer_mujoco import assets, export, sim
+from neoracer_mujoco import assets, contract, export, sim
 from neoracer_mujoco.physics import PhysicsRanges, Range
 from neoracer_mujoco.racecar import neoracer_params
 from neoracer_mujoco.sim import SpawnRange
@@ -465,7 +465,7 @@ def test_a_one_car_arena_on_the_loop_is_the_scene_that_compose_makes():
     config = NeoRacerEnvConfig()
     (arena,) = arenas_of(config, [Start()], False)
     composed = loop_scene(config, False)
-    assert arena.scene.car.body.name == assets.CAR_PREFIX + "car"
+    assert arena.scene.car.body.name == assets.CAR_PREFIX + contract.CAR_BODY
     assert arena.scene.model.names == composed.model.names
 
 

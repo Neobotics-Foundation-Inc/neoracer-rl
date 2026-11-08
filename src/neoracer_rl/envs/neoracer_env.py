@@ -265,16 +265,21 @@ def arenas_of(
     config: NeoRacerEnvConfig, starts: Sequence[Start], visuals: bool
 ) -> tuple[Arena, ...]:
     """The tracks of config.tracks, with a car of config at each of starts,
-    placed along the track by pose_along. One car keeps its names
-    unprefixed; several are behind the prefixes car0/, car1/, ...
-    (assets.compose_cars). On loop_corridor, whose start is on a straight,
-    each Start's offset and heading are in the frame of the track's start.
+    placed along the track by pose_along. One car's names are behind
+    assets.CAR_PREFIX, as assets.compose puts them; several cars' are behind
+    the prefixes car0/, car1/, ... (assets.compose_cars). On loop_corridor,
+    whose start is on a straight, each Start's offset and heading are in the
+    frame of the track's start.
 
     A generated track where a spawn of config.spawn could put a car against
     a wall (sim.spawn_clears_walls) is left out, as a seed that gives no
     track is. Raise ValueError if one could on loop_corridor, or if the
     seeds give too few tracks."""
-    prefixes = [""] if len(starts) == 1 else [f"car{k}/" for k in range(len(starts))]
+    prefixes = (
+        [assets.CAR_PREFIX]
+        if len(starts) == 1
+        else [f"car{k}/" for k in range(len(starts))]
+    )
     match config.tracks:
         case LoopCorridor() as loop:
             entries = [

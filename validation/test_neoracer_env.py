@@ -39,7 +39,7 @@ from neoracer_rl.envs import (
     NeoRacerEnvConfig,
     Start,
 )
-from neoracer_rl.envs.neoracer_env import arenas, arenas_of, lap_angle
+from neoracer_rl.envs.neoracer_env import arenas, arenas_of, lap_angle, loop_scene
 
 LAP = 2.0 * np.pi
 """One full lap of progress (rad)."""
@@ -456,6 +456,17 @@ def test_a_car_that_a_spawn_can_put_against_the_loops_wall_is_refused():
     against its wall is refused."""
     with pytest.raises(ValueError, match="loop_corridor"):
         arenas_of(NeoRacerEnvConfig(), [Start((0.0, 0.4))], False)
+
+
+def test_a_one_car_arena_on_the_loop_is_the_scene_that_compose_makes():
+    """arenas_of attaches a lone car as assets.compose does, its names behind
+    assets.CAR_PREFIX, so code written for a composed scene finds its parts
+    by the same names."""
+    config = NeoRacerEnvConfig()
+    (arena,) = arenas_of(config, [Start()], False)
+    composed = loop_scene(config, False)
+    assert arena.scene.car.body.name == assets.CAR_PREFIX + "car"
+    assert arena.scene.model.names == composed.model.names
 
 
 def test_a_pool_gives_episodes_on_several_tracks():

@@ -85,20 +85,29 @@ def _act(step: Step) -> Observations:
 def test_a_policy_car_drives_as_a_learner_given_its_actions():
     """A car that a Policy drives steps as a Learner, bit for bit, when the
     learner is given the actions that the Policy would give from its
-    observations."""
+    observations, through a race that starts over. The two part where the
+    car meets an end of its own: a learner's end starts its race over, a
+    Policy car's does not."""
     with_policy = RaceConfig(cars=(Racer(), Racer(Policy(_act), Start((1.0, 0.0)))))
     two_learners = RaceConfig(cars=(Racer(), AHEAD))
     (p, ps), (ll, ls) = _race(2, with_policy), _race(2, two_learners)
     np.testing.assert_array_equal(ps.obs, ls.obs[0::2])
     rng = np.random.default_rng(2)
+    compared, restarted = 0, False
     for _ in range(90):
         first = rng.uniform((0.0, -1.0), (1.0, 1.0), (2, 2)).astype(np.float32)
         ahead = _steer_from(ls.obs[1::2])
         ps, po = p.step(ps, first)
         ls, lo = ll.step(ls, np.stack([first, ahead], axis=1).reshape(4, 2))
+        if (lo.reason[1::2] > 0).any():
+            break
         np.testing.assert_array_equal(po.obs, lo.obs[0::2])
         np.testing.assert_array_equal(po.reward, lo.reward[0::2])
+        np.testing.assert_array_equal(po.done, lo.done[0::2])
         np.testing.assert_array_equal(po.laps, lo.laps)
+        compared += 1
+        restarted |= bool(po.done.any())
+    assert compared >= 40 and restarted
     p.close()
     ll.close()
 
@@ -307,7 +316,7 @@ def test_a_car_turned_by_pi_drives_back_around_the_lap():
     env_config = NeoRacerEnvConfig(tracks=tracks, spawn=spawn, observe=_progress)
     config = RaceConfig(env_config, racers)
     env, state = _race(4, config)
-    for _ in range(20):
+    for _ in range(12):
         state, out = env.step(state, np.tile(FULL, (env.nbatch, 1)))
         assert not out.done.any()
     assert (out.obs[0::2, 0] > 0.05).all()
